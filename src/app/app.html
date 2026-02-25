@@ -1,0 +1,178 @@
+<div class="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-sans antialiased">
+  <!-- Header -->
+  <header class="flex items-center justify-between px-6 h-14 bg-white border-b border-slate-200 shadow-sm sticky top-0 z-10">
+    <div class="flex items-center gap-2.5 font-semibold text-base text-slate-900 tracking-tight">
+      <svg class="w-5.5 h-5.5 text-blue-500 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M6 9V2h12v7" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        <rect x="2" y="9" width="20" height="9" rx="2" stroke="currentColor" stroke-width="1.8"/>
+        <path d="M6 14h12M6 18v4h12v-4" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        <circle cx="18" cy="13" r="1" fill="currentColor"/>
+      </svg>
+      <span>Printer Monitor</span>
+    </div>
+    <button 
+      class="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-sm font-medium text-slate-500 hover:text-slate-900 hover:bg-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500" 
+      (click)="refresh()" 
+      [disabled]="loading()" 
+      aria-label="Actualizar">
+      <svg class="w-4 h-4 shrink-0" [class.animate-spin]="loading()" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M4 4v5h5M20 20v-5h-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M4.06 15a9 9 0 1 0 .91-4.62" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+      Actualizar
+    </button>
+  </header>
+
+  <main class="flex-1 p-6 w-full max-w-[820px] mx-auto flex flex-col gap-6">
+    <!-- Server Info Cards -->
+    <section aria-labelledby="server-heading">
+      <h2 class="text-[13px] font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-2" id="server-heading">
+        Información del Servidor
+      </h2>
+      <div class="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3">
+        <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
+          <span class="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">IP Local</span>
+          @if (loading()) {
+            <span class="block h-5 w-28 rounded-md bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 bg-[length:800px_100%] animate-[shimmer_1.4s_ease-in-out_infinite]" aria-label="Cargando IP"></span>
+          } @else {
+            <span class="block text-[17px] font-semibold text-slate-900 break-all">{{ localIp() }}</span>
+          }
+        </div>
+        <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
+          <span class="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Puerto Backend / Frontend</span>
+          @if (loading()) {
+            <span class="block h-5 w-16 rounded-md bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 bg-[length:800px_100%] animate-[shimmer_1.4s_ease-in-out_infinite]" aria-label="Cargando puerto"></span>
+          } @else {
+            <span class="block text-[17px] font-semibold text-slate-900 break-all">{{ port() }}</span>
+          }
+        </div>
+        <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm col-span-full">
+          <span class="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">URL de Acceso</span>
+          @if (loading()) {
+            <span class="block h-5 w-48 rounded-md bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 bg-[length:800px_100%] animate-[shimmer_1.4s_ease-in-out_infinite]" aria-label="Cargando URL"></span>
+          } @else {
+            <a class="block text-[17px] font-semibold text-blue-600 break-all hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 rounded-sm" [href]="frontendUrl()" target="_blank" rel="noopener noreferrer">
+              {{ frontendUrl() }}
+            </a>
+          }
+        </div>
+      </div>
+    </section>
+
+    <!-- Error Banner -->
+    @if (error()) {
+      <div class="flex items-start gap-2.5 p-3 rounded-lg text-sm border bg-red-50 border-red-200 text-red-600" role="alert">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" class="w-[18px] h-[18px] shrink-0 mt-px">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.8"/>
+          <path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        <span>{{ error() }}</span>
+      </div>
+    }
+
+    <!-- Print Result Banner -->
+    @if (printResult()) {
+      <div class="flex items-start gap-2.5 p-3 rounded-lg text-sm border" 
+           [class.bg-green-50]="printResult()!.ok" [class.border-green-200]="printResult()!.ok" [class.text-green-600]="printResult()!.ok"
+           [class.bg-red-50]="!printResult()!.ok" [class.border-red-200]="!printResult()!.ok" [class.text-red-600]="!printResult()!.ok"
+           role="status">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" class="w-[18px] h-[18px] shrink-0 mt-px">
+          @if (printResult()!.ok) {
+            <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          } @else {
+            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          }
+        </svg>
+        <span>{{ printResult()!.message }}</span>
+      </div>
+    }
+
+    <!-- Printers Section -->
+    <section aria-labelledby="printers-heading">
+      <h2 class="text-[13px] font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-2" id="printers-heading">
+        Impresoras
+        @if (!loading()) {
+          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-200 text-slate-500">{{ printers().length }}</span>
+        }
+      </h2>
+
+      @if (loading()) {
+        <div class="flex flex-col gap-2.5" aria-busy="true" aria-label="Cargando impresoras">
+          @for (_ of [1,2,3]; track $index) {
+            <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm flex flex-col gap-3 pointer-events-none">
+              <div class="h-5 w-[60%] mb-1 rounded-md bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 bg-[length:800px_100%] animate-[shimmer_1.4s_ease-in-out_infinite]"></div>
+              <div class="h-5 w-16 rounded-md bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 bg-[length:800px_100%] animate-[shimmer_1.4s_ease-in-out_infinite]"></div>
+              <div class="flex gap-2 flex-wrap">
+                <span class="h-8 w-[68px] rounded-md bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 bg-[length:800px_100%] animate-[shimmer_1.4s_ease-in-out_infinite]"></span>
+                <span class="h-8 w-[68px] rounded-md bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 bg-[length:800px_100%] animate-[shimmer_1.4s_ease-in-out_infinite]"></span>
+                <span class="h-8 w-[68px] rounded-md bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 bg-[length:800px_100%] animate-[shimmer_1.4s_ease-in-out_infinite]"></span>
+              </div>
+            </div>
+          }
+        </div>
+      } @else if (printers().length === 0) {
+        <div class="flex flex-col items-center justify-center gap-3 py-12 px-6 bg-white border border-dashed border-slate-200 rounded-lg text-slate-500 text-center" role="status">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" class="w-10 h-10 opacity-40">
+            <path d="M6 9V2h12v7M2 9h20v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+            <path d="M6 14h.01M10 14h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <p class="text-[15px] max-w-[320px]">No se encontraron impresoras instaladas en este equipo.</p>
+        </div>
+      } @else {
+        <ul class="flex flex-col gap-2.5" aria-label="Lista de impresoras">
+          @for (printer of printers(); track printer.name) {
+            <li class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm flex flex-col gap-3">
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2 flex-wrap min-w-0">
+                  <span class="font-semibold text-[15px] text-slate-900 whitespace-nowrap overflow-hidden text-ellipsis max-w-[360px]">{{ printer.name }}</span>
+                  @if (printer.is_default) {
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">Predeterminada</span>
+                  }
+                </div>
+                <span class="inline-flex items-center gap-1.5 text-[13px] font-medium text-slate-500 whitespace-nowrap shrink-0" [attr.title]="printer.status">
+                  <span class="block w-2 h-2 rounded-full shrink-0" [class.bg-green-500]="printer.status === 'Disponible'" [class.bg-slate-400]="printer.status !== 'Disponible'"></span>
+                  {{ printer.status }}
+                </span>
+              </div>
+              <div class="flex gap-2 flex-wrap" role="group" [attr.aria-label]="'Imprimir prueba con ' + printer.name">
+                <button
+                  class="inline-flex items-center gap-1.5 px-3 h-8 bg-transparent border border-slate-200 text-slate-900 rounded-md text-sm font-medium cursor-pointer transition-colors hover:not-disabled:bg-slate-100 hover:not-disabled:border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+                  (click)="printTest(printer, 'a4')"
+                  [disabled]="printingFor() !== null"
+                  [attr.aria-busy]="isPrinting(printer, 'a4')"
+                  title="Imprimir hoja de prueba A4">
+                  @if (isPrinting(printer, 'a4')) {
+                    <span class="inline-block w-[13px] h-[13px] border-2 border-current border-r-transparent rounded-full animate-spin shrink-0" aria-hidden="true"></span>
+                  }
+                  🖨 A4
+                </button>
+                <button
+                  class="inline-flex items-center gap-1.5 px-3 h-8 bg-transparent border border-slate-200 text-slate-900 rounded-md text-sm font-medium cursor-pointer transition-colors hover:not-disabled:bg-slate-100 hover:not-disabled:border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+                  (click)="printTest(printer, 'thermal_50mm')"
+                  [disabled]="printingFor() !== null"
+                  [attr.aria-busy]="isPrinting(printer, 'thermal_50mm')"
+                  title="Imprimir ticket de prueba 50mm">
+                  @if (isPrinting(printer, 'thermal_50mm')) {
+                    <span class="inline-block w-[13px] h-[13px] border-2 border-current border-r-transparent rounded-full animate-spin shrink-0" aria-hidden="true"></span>
+                  }
+                  🧾 50mm
+                </button>
+                <button
+                  class="inline-flex items-center gap-1.5 px-3 h-8 bg-transparent border border-slate-200 text-slate-900 rounded-md text-sm font-medium cursor-pointer transition-colors hover:not-disabled:bg-slate-100 hover:not-disabled:border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+                  (click)="printTest(printer, 'thermal_80mm')"
+                  [disabled]="printingFor() !== null"
+                  [attr.aria-busy]="isPrinting(printer, 'thermal_80mm')"
+                  title="Imprimir ticket de prueba 80mm">
+                  @if (isPrinting(printer, 'thermal_80mm')) {
+                    <span class="inline-block w-[13px] h-[13px] border-2 border-current border-r-transparent rounded-full animate-spin shrink-0" aria-hidden="true"></span>
+                  }
+                  🧾 80mm
+                </button>
+              </div>
+            </li>
+          }
+        </ul>
+      }
+    </section>
+  </main>
+</div>
