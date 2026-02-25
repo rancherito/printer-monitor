@@ -1,15 +1,32 @@
-name: Build Windows
+name: Build & Release
 
 on:
   push:
-    branches: [main]
     tags:
       - 'v*'
   workflow_dispatch:
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact-name: windows-x64
+            artifact-path: |
+              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            artifact-name: macos-arm64
+            artifact-path: |
+              src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+              src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
+
+    runs-on: ${{ matrix.platform }}
 
     steps:
       - name: Checkout
@@ -27,25 +44,40 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ matrix.target }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          key: ${{ matrix.target }}
 
-      - name: Build Tauri for Windows
+      - name: Install macOS dependencies
+        if: matrix.platform == 'macos-latest'
+        run: brew install pkg-config
+
+      - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: --target x86_64-pc-windows-msvc
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Printer Monitor ${{ github.ref_name }}'
+          releaseBody: |
+            ## Printer Monitor ${{ github.ref_name }}
 
-      - name: Upload installer
+            ### Descarga
+            - **Windows:** archivo `.msi` (instalador) o `.exe` (NSIS)
+            - **macOS (Apple Silicon):** archivo `.dmg`
+
+            > Los instaladores de Windows se pueden usar sin tener instalado nada más.
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.target }}
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: printer-monitor-windows
-          path: |
-            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
-            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-          if-no-files-found: error
+          name: printer-monitor-${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-path }}
+          if-no-files-found: warn
