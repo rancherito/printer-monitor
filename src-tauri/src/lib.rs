@@ -1,4 +1,9 @@
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use std::net::TcpListener;
+use tauri::Manager;
+use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_autostart::ManagerExt;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PrinterInfo {
@@ -7,11 +12,39 @@ pub struct PrinterInfo {
     pub status: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NetworkDevice {
+    pub ip: String,
+    pub hostname: Option<String>,
+    pub is_reachable: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BluetoothDevice {
+    pub name: String,
+    pub address: String,
+    pub is_connected: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AppSettings {
+    pub port_dev: u16,
+    pub port_prod: u16,
+    pub active_port: u16,
+    pub is_dev: bool,
+    /// Pares clave/valor adicionales (clave → valor como String)
+    pub extra: std::collections::HashMap<String, String>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SystemInfo {
     pub local_ip: String,
     pub port: u16,
+    pub is_dev: bool,
     pub printers: Vec<PrinterInfo>,
+    pub autostart_enabled: bool,
+    pub network_devices: Vec<NetworkDevice>,
+    pub bluetooth_devices: Vec<BluetoothDevice>,
 }
 
 /// Obtiene las impresoras del sistema usando lpstat (macOS/Linux) o wmic (Windows)
@@ -95,19 +128,425 @@ fn get_local_ip() -> String {
         .unwrap_or_else(|_| "No disponible".to_string())
 }
 
-/// Puerto en el que corre la app (fijo 4200)
-#[tauri::command]
-fn get_app_port() -> u16 {
-    4200
+// ─── Configuración SQLite ────────────────────────────────────────────────────
+
+/// Devuelve la ruta al fichero SQLite dentro del directorio de datos de la app
+fn db_path(app: &tauri::AppHandle) -> std::path::PathBuf {
+    app.path()
+        .app_data_dir()
+        .expect("No se pudo obtener app_data_dir")
+        .join("settings.db")
 }
+
+/// Abre (o crea) la BD y garantiza que la tabla `settings` existe
+fn open_db(app: &tauri::AppHandle) -> Result<Connection, String> {
+    let path = db_path(app);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("No se pudo crear directorio de datos: {e}"))?;
+    }
+    let conn = Connection::open(&path)
+        .map_err(|e| format!("No se pudo abrir la BD: {e}"))?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );",
+    )
+    .map_err(|e| format!("No se pudo inicializar la BD: {e}"))?;
+    Ok(conn)
+}
+
+/// Lee un valor de la BD; devuelve `None` si la clave no existe
+fn db_get(conn: &Connection, key: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        params![key],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+}
+
+/// Escribe (o sobreescribe) un par clave/valor en la BD
+fn db_set(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )
+    .map(|_| ())
+    .map_err(|e| format!("Error al guardar configuración: {e}"))
+}
+
+/// Comprueba si un puerto TCP está libre en 127.0.0.1
+fn port_is_free(port: u16) -> bool {
+    TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+/// Busca el primer puerto libre comenzando desde `start`
+fn find_free_port(start: u16) -> u16 {
+    (start..=65535)
+        .find(|&p| port_is_free(p))
+        .unwrap_or(start)
+}
+
+/// Devuelve el puerto activo para el modo actual:
+/// - Dev : siempre empieza en 9002; si está ocupado busca el siguiente libre.
+///          El puerto de desarrollo es fijo y NO se persiste en la BD.
+/// - Prod: lee el preferido de la BD (por defecto 9003); si está ocupado
+///          busca el siguiente libre y guarda el nuevo valor.
+fn resolve_port(app: &tauri::AppHandle) -> u16 {
+    if cfg!(debug_assertions) {
+        // Dev: fijo en 9002, nunca se almacena
+        return find_free_port(9002);
+    }
+
+    // Prod: leer de BD y persistir si cambia
+    let conn = match open_db(app) {
+        Ok(c) => c,
+        Err(_) => return find_free_port(9003),
+    };
+
+    let preferred: u16 = db_get(&conn, "port_prod")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(9003);
+
+    let active = if port_is_free(preferred) {
+        preferred
+    } else {
+        find_free_port(preferred + 1)
+    };
+
+    let _ = db_set(&conn, "port_prod", &active.to_string());
+    active
+}
+
+/// Comando: devuelve la configuración de la app.
+/// `port_dev` siempre es 9002 (fijo, no se almacena en BD).
+/// `port_prod` se lee de la BD (por defecto 9003).
+#[tauri::command]
+fn get_settings(app: tauri::AppHandle) -> Result<AppSettings, String> {
+    let is_dev = cfg!(debug_assertions);
+    let active_port = resolve_port(&app);
+
+    let conn = open_db(&app)?;
+
+    // port_dev es siempre 9002 — no se guarda en SQLite
+    let port_dev: u16 = 9002;
+    let port_prod: u16 = db_get(&conn, "port_prod")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(9003);
+
+    // Pares extra: cualquier clave que no sea port_prod
+    let mut extra = std::collections::HashMap::new();
+    let mut stmt = conn
+        .prepare("SELECT key, value FROM settings WHERE key != 'port_prod'")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?;
+    for row in rows.flatten() {
+        extra.insert(row.0, row.1);
+    }
+
+    Ok(AppSettings { port_dev, port_prod, active_port, is_dev, extra })
+}
+
+/// Comando: guarda un par clave/valor de configuración en la BD.
+/// `port_dev` está bloqueado (es fijo en 9002 y no se persiste).
+/// `port_prod` requiere un u16 válido.
+#[tauri::command]
+fn set_setting(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
+    if key == "port_dev" {
+        return Err("El puerto de desarrollo es fijo (9002) y no se puede modificar".to_string());
+    }
+    if key == "port_prod" {
+        value
+            .parse::<u16>()
+            .map_err(|_| "El valor de 'port_prod' debe ser un número de puerto válido (1-65535)".to_string())?;
+    }
+    let conn = open_db(&app)?;
+    db_set(&conn, &key, &value)
+}
+
+/// Renombra una impresora en el sistema operativo.
+/// macOS / Linux (CUPS): cambia la descripción visible con `lpadmin -p <queue> -D "<nuevo>"`.
+/// Windows: usa `Rename-Printer` de PowerShell.
+#[tauri::command]
+fn rename_printer(printer_name: String, new_name: String) -> Result<String, String> {
+    use std::process::Command;
+
+    let name = new_name.trim().to_string();
+    if name.is_empty() {
+        return Err("El nuevo nombre no puede estar vacío".to_string());
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let result = Command::new("lpadmin")
+        .args(["-p", &printer_name, "-D", &name])
+        .output()
+        .map_err(|e| format!("No se pudo ejecutar lpadmin: {e}"))
+        .and_then(|o| {
+            if o.status.success() {
+                Ok(format!("Impresora renombrada a \u{ab}{}\u{bb}", name))
+            } else {
+                Err(format!("Error al renombrar: {}", String::from_utf8_lossy(&o.stderr).trim()))
+            }
+        });
+
+    #[cfg(target_os = "windows")]
+    let result = {
+        let script = format!(
+            "Rename-Printer -Name '{}' -NewName '{}'",
+            printer_name.replace('\'', "''"),
+            name.replace('\'', "''")
+        );
+        Command::new("powershell")
+            .args(["-NoProfile", "-Command", &script])
+            .output()
+            .map_err(|e| format!("No se pudo ejecutar PowerShell: {e}"))
+            .and_then(|o| {
+                if o.status.success() {
+                    Ok(format!("Impresora renombrada a \u{ab}{}\u{bb}", name))
+                } else {
+                    Err(format!("Error al renombrar: {}", String::from_utf8_lossy(&o.stderr).trim()))
+                }
+            })
+    };
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    let result: Result<String, String> = Err("Sistema operativo no soportado".to_string());
+
+    result
+}
+
+/// Devuelve el puerto activo según el modo de ejecución
+#[tauri::command]
+fn get_app_port(app: tauri::AppHandle) -> u16 {
+    resolve_port(&app)
+}
+
+// ─── Autostart ───────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn get_autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|e| format!("Error al verificar autostart: {e}"))
+}
+
+#[tauri::command]
+fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable().map_err(|e| format!("Error al activar autostart: {e}"))
+    } else {
+        manager.disable().map_err(|e| format!("Error al desactivar autostart: {e}"))
+    }
+}
+
+// ─── Equipos en red ──────────────────────────────────────────────────────────
+
+/// Escanea la subred local y devuelve los hosts que responden a ping
+#[tauri::command]
+fn scan_network() -> Vec<NetworkDevice> {
+    use std::net::IpAddr;
+    use std::process::Command;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+
+    let local_ip = local_ip_address::local_ip().ok();
+    let base = match local_ip {
+        Some(IpAddr::V4(v4)) => {
+            let octets = v4.octets();
+            format!("{}.{}.{}.", octets[0], octets[1], octets[2])
+        }
+        _ => return vec![],
+    };
+
+    let devices = Arc::new(Mutex::new(Vec::new()));
+    let mut handles = Vec::new();
+
+    for i in 1u8..=254 {
+        let base = base.clone();
+        let devices = Arc::clone(&devices);
+        let handle = thread::spawn(move || {
+            let ip = format!("{}{}", base, i);
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            let reachable = Command::new("ping")
+                .args(["-c", "1", "-W", "1", &ip])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            #[cfg(target_os = "windows")]
+            let reachable = Command::new("ping")
+                .args(["-n", "1", "-w", "500", &ip])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+
+            if reachable {
+                // Intento resolución inversa básica con `host` o `nslookup`
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                let hostname = Command::new("host")
+                    .arg(&ip)
+                    .output()
+                    .ok()
+                    .and_then(|o| {
+                        let s = String::from_utf8_lossy(&o.stdout).to_string();
+                        // "1.1.168.192.in-addr.arpa domain name pointer myhost."
+                        s.split("pointer ")
+                            .nth(1)
+                            .map(|h| h.trim().trim_end_matches('.').to_string())
+                    });
+                #[cfg(target_os = "windows")]
+                let hostname = None;
+
+                devices.lock().unwrap().push(NetworkDevice {
+                    ip,
+                    hostname,
+                    is_reachable: true,
+                });
+            }
+        });
+        handles.push(handle);
+    }
+
+    for h in handles {
+        let _ = h.join();
+    }
+
+    let mut result = devices.lock().unwrap().clone();
+    result.sort_by(|a, b| {
+        let a_last: u8 = a.ip.split('.').last().and_then(|n| n.parse().ok()).unwrap_or(0);
+        let b_last: u8 = b.ip.split('.').last().and_then(|n| n.parse().ok()).unwrap_or(0);
+        a_last.cmp(&b_last)
+    });
+    result
+}
+
+// ─── Bluetooth ───────────────────────────────────────────────────────────────
+
+/// Devuelve los dispositivos Bluetooth conocidos/emparejados usando herramientas del SO
+#[tauri::command]
+fn get_bluetooth_devices() -> Vec<BluetoothDevice> {
+    use std::process::Command;
+
+    let mut devices: Vec<BluetoothDevice> = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    {
+        // system_profiler SPBluetoothDataType -json (disponible en macOS 12+)
+        if let Ok(output) = Command::new("system_profiler")
+            .args(["SPBluetoothDataType", "-json"])
+            .output()
+        {
+            let text = String::from_utf8_lossy(&output.stdout).to_string();
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(bt_arr) = json
+                    .get("SPBluetoothDataType")
+                    .and_then(|v| v.as_array())
+                {
+                    for bt_entry in bt_arr {
+                        // Dispositivos en "device_connected" y "device_not_connected"
+                        for (key, connected) in [
+                            ("device_connected", true),
+                            ("device_not_connected", false),
+                        ] {
+                            if let Some(list) = bt_entry.get(key).and_then(|v| v.as_array()) {
+                                for dev in list {
+                                    if let Some(obj) = dev.as_object() {
+                                        for (name, info) in obj {
+                                            let address = info
+                                                .get("device_address")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("—")
+                                                .to_string();
+                                            devices.push(BluetoothDevice {
+                                                name: name.clone(),
+                                                address,
+                                                is_connected: connected,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(output) = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Get-PnpDevice -Class Bluetooth | Select-Object FriendlyName,InstanceId,Status | ConvertTo-Csv -NoTypeInformation",
+            ])
+            .output()
+        {
+            let text = String::from_utf8_lossy(&output.stdout).to_string();
+            for line in text.lines().skip(1) {
+                let cols: Vec<&str> = line.splitn(3, ',').collect();
+                if cols.len() >= 3 {
+                    let name = cols[0].trim_matches('"').to_string();
+                    let address = cols[1].trim_matches('"').to_string();
+                    let status = cols[2].trim_matches('"');
+                    let is_connected = status.eq_ignore_ascii_case("OK");
+                    if !name.is_empty() {
+                        devices.push(BluetoothDevice { name, address, is_connected });
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(output) = Command::new("bluetoothctl").args(["devices"]).output() {
+            let text = String::from_utf8_lossy(&output.stdout).to_string();
+            for line in text.lines() {
+                // "Device AA:BB:CC:DD:EE:FF DeviceName"
+                let parts: Vec<&str> = line.splitn(3, ' ').collect();
+                if parts.len() == 3 && parts[0] == "Device" {
+                    let address = parts[1].to_string();
+                    let name = parts[2].to_string();
+                    // Comprobamos si está conectado
+                    let is_connected = Command::new("bluetoothctl")
+                        .args(["info", &address])
+                        .output()
+                        .map(|o| {
+                            String::from_utf8_lossy(&o.stdout).contains("Connected: yes")
+                        })
+                        .unwrap_or(false);
+                    devices.push(BluetoothDevice { name, address, is_connected });
+                }
+            }
+        }
+    }
+
+    devices
+}
+
+// ─── System Info ─────────────────────────────────────────────────────────────
 
 /// Devuelve toda la info del sistema en un solo comando
 #[tauri::command]
-fn get_system_info() -> SystemInfo {
+fn get_system_info(app: tauri::AppHandle) -> SystemInfo {
+    let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
+    let port = resolve_port(&app);
+    let is_dev = cfg!(debug_assertions);
     SystemInfo {
         local_ip: get_local_ip(),
-        port: get_app_port(),
+        port,
+        is_dev,
         printers: get_printers(),
+        autostart_enabled,
+        network_devices: vec![],   // se carga independientemente desde la UI
+        bluetooth_devices: vec![], // se carga independientemente desde la UI
     }
 }
 
@@ -294,6 +733,10 @@ fn escape_pdf_string(s: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -309,7 +752,14 @@ pub fn run() {
             get_local_ip,
             get_app_port,
             get_system_info,
+            get_settings,
+            set_setting,
+            rename_printer,
             print_test,
+            get_autostart_enabled,
+            set_autostart_enabled,
+            scan_network,
+            get_bluetooth_devices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
