@@ -19,11 +19,18 @@ export interface BluetoothDevice {
   is_connected: boolean;
 }
 
+export interface SerialPort {
+  port_name: string;
+  description: string;
+  device_type: 'USB-Serial' | 'USB-CDC' | 'COM' | string;
+}
+
 export interface SystemInfo {
   local_ip: string;
   port: number;
   is_dev: boolean;
   printers: PrinterInfo[];
+  serial_ports: SerialPort[];
   autostart_enabled: boolean;
   network_devices: NetworkDevice[];
   bluetooth_devices: BluetoothDevice[];
@@ -85,5 +92,9 @@ export class TauriService {
 
   async renamePrinter(printerName: string, newName: string): Promise<string> {
     return invoke<string>('rename_printer', { printerName, newName });
+  }
+
+  async getSerialPorts(): Promise<SerialPort[]> {
+    return invoke<SerialPort[]>('get_serial_ports');
   }
 }

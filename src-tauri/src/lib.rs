@@ -1,15 +1,25 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::net::TcpListener;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_autostart::ManagerExt;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct PrinterInfo {
     pub name: String,
     pub is_default: bool,
     pub status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct SerialPort {
+    /// Ruta completa o nombre del puerto: "/dev/cu.usbserial-1420", "COM3"
+    pub port_name: String,
+    /// Descripción legible (p.ej. nombre del chip o dispositivo)
+    pub description: String,
+    /// Categoría: "USB-Serial" | "USB-CDC" | "COM"
+    pub device_type: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -42,6 +52,7 @@ pub struct SystemInfo {
     pub port: u16,
     pub is_dev: bool,
     pub printers: Vec<PrinterInfo>,
+    pub serial_ports: Vec<SerialPort>,
     pub autostart_enabled: bool,
     pub network_devices: Vec<NetworkDevice>,
     pub bluetooth_devices: Vec<BluetoothDevice>,
@@ -126,6 +137,111 @@ fn get_local_ip() -> String {
     local_ip_address::local_ip()
         .map(|ip| ip.to_string())
         .unwrap_or_else(|_| "No disponible".to_string())
+}
+
+// ─── Puertos serie / USB-COM ──────────────────────────────────────────────────
+
+/// Detecta adaptadores USB-serial y puertos COM conectados al sistema
+fn list_serial_ports() -> Vec<SerialPort> {
+    let mut ports: Vec<SerialPort> = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    {
+        // macOS: USB-serial aparece como /dev/cu.usb*
+        // cu.usbserial-* → adaptadores FTDI, CH340, CP2102…
+        // cu.usbmodem*   → USB CDC ACM (Arduino, etc.)
+        if let Ok(entries) = std::fs::read_dir("/dev") {
+            let mut found: Vec<SerialPort> = entries
+                .flatten()
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if name.starts_with("cu.usb") {
+                        let device_type = if name.to_lowercase().contains("modem") {
+                            "USB-CDC"
+                        } else {
+                            "USB-Serial"
+                        };
+                        Some(SerialPort {
+                            port_name: format!("/dev/{}", name),
+                            description: name.clone(),
+                            device_type: device_type.to_string(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            found.sort_by(|a, b| a.port_name.cmp(&b.port_name));
+            ports.extend(found);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // ttyUSB* = adaptadores USB-serial (CH340, CP2102, FTDI)
+        // ttyACM* = USB CDC ACM (Arduino, módems)
+        if let Ok(entries) = std::fs::read_dir("/dev") {
+            let mut found: Vec<SerialPort> = entries
+                .flatten()
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if name.starts_with("ttyUSB") || name.starts_with("ttyACM") {
+                        let device_type = if name.starts_with("ttyACM") { "USB-CDC" } else { "USB-Serial" };
+                        Some(SerialPort {
+                            port_name: format!("/dev/{}", name),
+                            description: name.clone(),
+                            device_type: device_type.to_string(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            found.sort_by(|a, b| a.port_name.cmp(&b.port_name));
+            ports.extend(found);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        if let Ok(output) = Command::new("wmic")
+            .args(["path", "Win32_SerialPort", "get", "DeviceID,Description", "/format:csv"])
+            .output()
+        {
+            let text = String::from_utf8_lossy(&output.stdout).to_string();
+            for line in text.lines().skip(2) {
+                // CSV: Node, Description, DeviceID  (WMIC ordena los campos alfabéticamente)
+                let cols: Vec<&str> = line.split(',').collect();
+                // Buscamos el campo que empiece con "COM"
+                let port_name = cols.iter()
+                    .map(|s| s.trim())
+                    .find(|s| s.starts_with("COM"))
+                    .unwrap_or("")
+                    .to_string();
+                let description = cols.get(1).map(|s| s.trim()).unwrap_or("").to_string();
+                if !port_name.is_empty() {
+                    let device_type = if description.to_lowercase().contains("usb") {
+                        "USB-Serial"
+                    } else {
+                        "COM"
+                    };
+                    ports.push(SerialPort {
+                        port_name,
+                        description,
+                        device_type: device_type.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    ports
+}
+
+#[tauri::command]
+fn get_serial_ports() -> Vec<SerialPort> {
+    list_serial_ports()
 }
 
 // ─── Configuración SQLite ────────────────────────────────────────────────────
@@ -544,9 +660,10 @@ fn get_system_info(app: tauri::AppHandle) -> SystemInfo {
         port,
         is_dev,
         printers: get_printers(),
+        serial_ports: list_serial_ports(),
         autostart_enabled,
-        network_devices: vec![],   // se carga independientemente desde la UI
-        bluetooth_devices: vec![], // se carga independientemente desde la UI
+        network_devices: vec![],   // se carga bajo demanda desde la UI
+        bluetooth_devices: vec![], // se carga bajo demanda desde la UI
     }
 }
 
@@ -730,6 +847,39 @@ fn escape_pdf_string(s: &str) -> String {
         .collect()
 }
 
+// ─── Watcher de impresoras y puertos USB/COM ──────────────────────────────────
+
+/// Lanza un hilo de fondo que detecta cambios en la lista de impresoras y
+/// puertos USB/COM cada 2 segundos y emite el evento `printers-updated`.
+/// El estado inicial lo sirve `get_system_info`; el watcher solo emite
+/// cuando detecta una diferencia respecto al snapshot anterior.
+fn start_printer_watcher(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        // Inicializar snapshot con el estado actual para no emitir en el arranque
+        let mut prev_printers = get_printers();
+        let mut prev_serial = list_serial_ports();
+
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            let printers = get_printers();
+            let serial = list_serial_ports();
+
+            if printers != prev_printers || serial != prev_serial {
+                let _ = handle.emit(
+                    "printers-updated",
+                    serde_json::json!({
+                        "printers": printers,
+                        "serial_ports": serial,
+                    }),
+                );
+                prev_printers = printers;
+                prev_serial = serial;
+            }
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -745,6 +895,7 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            start_printer_watcher(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -760,6 +911,7 @@ pub fn run() {
             set_autostart_enabled,
             scan_network,
             get_bluetooth_devices,
+            get_serial_ports,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

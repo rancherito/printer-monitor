@@ -1,5 +1,6 @@
-import { Component, OnInit, signal, computed, ChangeDetectionStrategy, inject } from '@angular/core';
-import { TauriService, PrinterInfo, SystemInfo, NetworkDevice, BluetoothDevice, AppSettings } from './tauri.service';
+import { Component, OnInit, OnDestroy, signal, computed, ChangeDetectionStrategy, inject } from '@angular/core';
+import { listen } from '@tauri-apps/api/event';
+import { TauriService, PrinterInfo, SystemInfo, NetworkDevice, BluetoothDevice, AppSettings, SerialPort } from './tauri.service';
 
 type PrintSize = 'a4' | 'thermal_50mm' | 'thermal_80mm';
 
@@ -10,8 +11,9 @@ type PrintSize = 'a4' | 'thermal_50mm' | 'thermal_80mm';
   styleUrl: './app.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class App implements OnInit {
+export class App implements OnInit, OnDestroy {
   private readonly tauri = inject(TauriService);
+  private unlistenPrinters: (() => void) | null = null;
 
   protected readonly loading = signal(true);
   protected readonly error = signal<string | null>(null);
@@ -49,6 +51,7 @@ export class App implements OnInit {
   protected readonly renameResult = signal<{ ok: boolean; message: string; printerName: string } | null>(null);
 
   protected readonly printers = computed(() => this.systemInfo()?.printers ?? []);
+  protected readonly serialPorts = computed(() => this.systemInfo()?.serial_ports ?? []);
   protected readonly localIp = computed(() => this.systemInfo()?.local_ip ?? '—');
   protected readonly port = computed(() => this.systemInfo()?.port ?? '—');
   protected readonly frontendUrl = computed(() => {
@@ -58,7 +61,21 @@ export class App implements OnInit {
   });
 
   async ngOnInit(): Promise<void> {
+    // Suscripción permanente: el backend emite 'printers-updated' cada vez que
+    // detecta un cambio en impresoras o puertos USB/COM (watcher cada 2 s)
+    this.unlistenPrinters = await listen<{ printers: PrinterInfo[]; serial_ports: SerialPort[] }>(
+      'printers-updated',
+      ({ payload }) => {
+        this.systemInfo.update(info =>
+          info ? { ...info, printers: payload.printers, serial_ports: payload.serial_ports } : info
+        );
+      },
+    );
     await this.refresh();
+  }
+
+  ngOnDestroy(): void {
+    this.unlistenPrinters?.();
   }
 
   async refresh(): Promise<void> {

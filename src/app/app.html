@@ -347,6 +347,63 @@
       }
     </section>
 
+    <!-- USB / COM Devices Section -->
+    <section aria-labelledby="serial-heading">
+      <h2 class="text-[13px] font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-2" id="serial-heading">
+        <svg class="w-4 h-4 text-slate-400 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="2" y="7" width="20" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
+          <path d="M8 7V5M12 7V4M16 7V5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        Dispositivos USB / COM
+        @if (!loading()) {
+          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-200 text-slate-500">{{ serialPorts().length }}</span>
+        }
+        <span class="ml-auto inline-flex items-center gap-1.5 text-[11px] font-normal normal-case tracking-normal text-slate-400">
+          <span class="inline-block w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse shrink-0"></span>
+          Tiempo real
+        </span>
+      </h2>
+
+      @if (loading()) {
+        <div class="flex flex-col gap-2" aria-busy="true" aria-label="Detectando dispositivos">
+          @for (_ of [1, 2]; track $index) {
+            <div class="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-sm flex items-center gap-3">
+              <span class="block h-4 w-36 rounded-md bg-slate-200 animate-pulse"></span>
+              <span class="block h-5 w-20 rounded-full bg-slate-200 animate-pulse ml-auto"></span>
+            </div>
+          }
+        </div>
+      } @else if (serialPorts().length === 0) {
+        <div class="flex flex-col items-center justify-center gap-2 py-8 px-6 bg-white border border-dashed border-slate-200 rounded-lg text-slate-400 text-center text-sm" role="status">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" class="w-8 h-8 opacity-40">
+            <rect x="2" y="7" width="20" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M8 7V5M12 7V4M16 7V5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+          No hay dispositivos USB/COM conectados.
+        </div>
+      } @else {
+        <ul class="flex flex-col gap-1.5" aria-label="Dispositivos USB y COM conectados">
+          @for (port of serialPorts(); track port.port_name) {
+            <li class="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-sm flex items-center justify-between gap-3">
+              <div class="flex items-center gap-2.5 min-w-0">
+                <span class="block w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
+                <span class="font-mono text-[13px] font-medium text-slate-900 truncate">{{ port.port_name }}</span>
+              </div>
+              <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full shrink-0"
+                    [class.bg-blue-100]="port.device_type === 'USB-Serial'"
+                    [class.text-blue-700]="port.device_type === 'USB-Serial'"
+                    [class.bg-violet-100]="port.device_type === 'USB-CDC'"
+                    [class.text-violet-700]="port.device_type === 'USB-CDC'"
+                    [class.bg-slate-100]="port.device_type === 'COM'"
+                    [class.text-slate-600]="port.device_type === 'COM'">
+                {{ port.device_type }}
+              </span>
+            </li>
+          }
+        </ul>
+      }
+    </section>
+
     <!-- Network Devices Section -->
     <section aria-labelledby="network-heading">
       <div class="flex items-center justify-between mb-3">
