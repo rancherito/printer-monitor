@@ -1,1 +1,33 @@
 /* Estilos globales del proyecto */
+@reference "tailwindcss";
+
+/* ── Tipografía de secciones ──────────────────────────────────────── */
+.section-title {
+  @apply flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2;
+}
+
+.label-xs {
+  @apply text-[11px] font-semibold uppercase tracking-wider text-slate-400;
+}
+
+.value-lg {
+  @apply font-semibold text-[15px] text-slate-900 font-mono;
+}
+
+/* ── Badges ───────────────────────────────────────────────────────── */
+.badge {
+  @apply inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-500;
+}
+
+.badge-blue {
+  @apply inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-blue-100 text-blue-700;
+}
+
+.badge-green {
+  @apply inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-700;
+}
+
+/* ── Skeleton loader ──────────────────────────────────────────────── */
+.skeleton {
+  @apply inline-block rounded-md bg-slate-100 animate-pulse h-4;
+}

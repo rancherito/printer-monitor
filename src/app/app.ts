@@ -1,12 +1,19 @@
-import { Component, OnInit, OnDestroy, signal, computed, ChangeDetectionStrategy, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal, computed, ChangeDetectionStrategy, inject, ElementRef, viewChild } from '@angular/core';
 import { listen } from '@tauri-apps/api/event';
-import { TauriService, PrinterInfo, SystemInfo, NetworkDevice, BluetoothDevice, AppSettings, SerialPort } from './tauri.service';
+import { NgIconComponent } from '@ng-icons/core';
+import { BtnComponent } from './btn.component';
+import { DashboardTabComponent } from './tabs/dashboard/dashboard-tab.component';
+import { PrintersTabComponent } from './tabs/printers/printers-tab.component';
+import { NetworkTabComponent } from './tabs/network/network-tab.component';
+import { BluetoothTabComponent } from './tabs/bluetooth-tab/bluetooth-tab.component';
+import { TauriService, PrinterInfo, SystemInfo, NetworkDevice, BluetoothDevice, AppSettings, SerialPort, NetworkConfig } from './tauri.service';
 
 type PrintSize = 'a4' | 'thermal_50mm' | 'thermal_80mm';
+type TabId = 'dashboard' | 'printers' | 'network' | 'bluetooth';
 
 @Component({
   selector: 'app-root',
-  imports: [],
+  imports: [NgIconComponent, BtnComponent, DashboardTabComponent, PrintersTabComponent, NetworkTabComponent, BluetoothTabComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -14,6 +21,22 @@ type PrintSize = 'a4' | 'thermal_50mm' | 'thermal_80mm';
 export class App implements OnInit, OnDestroy {
   private readonly tauri = inject(TauriService);
   private unlistenPrinters: (() => void) | null = null;
+
+  protected readonly tabs: ReadonlyArray<{ id: TabId; label: string; icon: string }> = [
+    { id: 'dashboard', label: 'Dashboard', icon: 'matDashboard' },
+    { id: 'printers', label: 'Impresoras', icon: 'matPrint' },
+    { id: 'network', label: 'Red', icon: 'matLan' },
+    { id: 'bluetooth', label: 'Bluetooth', icon: 'matBluetooth' },
+  ];
+
+  // Navegación por tabs
+  protected readonly activeTab = signal<TabId>('dashboard');
+
+  protected readonly printSizes: ReadonlyArray<{ key: PrintSize; label: string }> = [
+    { key: 'a4', label: 'A4' },
+    { key: 'thermal_50mm', label: '50 mm' },
+    { key: 'thermal_80mm', label: '80 mm' },
+  ];
 
   protected readonly loading = signal(true);
   protected readonly error = signal<string | null>(null);
@@ -50,6 +73,27 @@ export class App implements OnInit, OnDestroy {
   protected readonly renamingFor = signal<string | null>(null);
   protected readonly renameResult = signal<{ ok: boolean; message: string; printerName: string } | null>(null);
 
+  // Configuración IP personalizada
+  protected readonly customIp = signal('192.168.1.100');
+  protected readonly customMask = signal('255.255.255.0');
+  protected readonly scanningPrinters = signal(false);
+  protected readonly foundPrinters = signal<string[]>([]);
+
+  // Configuración de red del equipo
+  protected readonly networkConfig = signal<NetworkConfig | null>(null);
+  protected readonly loadingNetworkConfig = signal(false);
+  protected readonly savingNetworkConfig = signal(false);
+  protected readonly networkConfigResult = signal<{ ok: boolean; message: string } | null>(null);
+  protected readonly editingNetworkConfig = signal(false);
+  protected readonly tempIp = signal('');
+  protected readonly tempMask = signal('');
+  protected readonly tempGateway = signal('');
+
+  // Agregar impresora
+  protected readonly addingPrinter = signal<string | null>(null);
+  protected readonly printerNameInput = signal('');
+  protected readonly savingPrinter = signal(false);
+
   protected readonly printers = computed(() => this.systemInfo()?.printers ?? []);
   protected readonly serialPorts = computed(() => this.systemInfo()?.serial_ports ?? []);
   protected readonly localIp = computed(() => this.systemInfo()?.local_ip ?? '—');
@@ -72,6 +116,7 @@ export class App implements OnInit, OnDestroy {
       },
     );
     await this.refresh();
+    await this.loadNetworkConfig();
   }
 
   ngOnDestroy(): void {
@@ -203,6 +248,145 @@ export class App implements OnInit, OnDestroy {
       this.renameResult.set({ ok: false, message: String(e), printerName: printer.name });
     } finally {
       this.renamingFor.set(null);
+    }
+  }
+
+  setActiveTab(tab: TabId): void {
+    this.activeTab.set(tab);
+  }
+
+  async scanTcpIpPrinters(): Promise<void> {
+    this.scanningPrinters.set(true);
+    this.foundPrinters.set([]);
+    try {
+      // Usar la IP actual del equipo si está disponible
+      const ip = this.networkConfig()?.ip || this.localIp();
+      const mask = this.networkConfig()?.mask || '255.255.255.0';
+      const printers = await this.tauri.scanTcpIpPrinters(ip, mask);
+      this.foundPrinters.set(printers);
+    } catch (e) {
+      this.error.set(String(e));
+    } finally {
+      this.scanningPrinters.set(false);
+    }
+  }
+
+  async loadNetworkConfig(): Promise<void> {
+    this.loadingNetworkConfig.set(true);
+    try {
+      const config = await this.tauri.getNetworkConfig();
+      this.networkConfig.set(config);
+      this.customIp.set(config.ip);
+      this.customMask.set(config.mask);
+    } catch (e) {
+      this.error.set(String(e));
+    } finally {
+      this.loadingNetworkConfig.set(false);
+    }
+  }
+
+  startEditNetworkConfig(): void {
+    const config = this.networkConfig();
+    if (config) {
+      this.tempIp.set(config.ip);
+      this.tempMask.set(config.mask);
+      this.tempGateway.set(config.gateway);
+      this.editingNetworkConfig.set(true);
+      this.networkConfigResult.set(null);
+    }
+  }
+
+  cancelEditNetworkConfig(): void {
+    this.editingNetworkConfig.set(false);
+    this.tempIp.set('');
+    this.tempMask.set('');
+    this.tempGateway.set('');
+  }
+
+  async saveNetworkConfig(): Promise<void> {
+    this.savingNetworkConfig.set(true);
+    this.networkConfigResult.set(null);
+    try {
+      const result = await this.tauri.setNetworkConfig(
+        this.tempIp(),
+        this.tempMask(),
+        this.tempGateway()
+      );
+      this.networkConfigResult.set({ ok: true, message: result });
+      // Actualizar la señal inmediatamente con los valores guardados
+      // para que la UI los muestre de forma instantánea y correcta.
+      const currentConfig = this.networkConfig();
+      this.networkConfig.set({
+        ip: this.tempIp(),
+        mask: this.tempMask(),
+        gateway: this.tempGateway(),
+        interface: currentConfig?.interface ?? '',
+      });
+      this.editingNetworkConfig.set(false);
+      // Recargar desde el SO tras un tiempo prudencial para confirmar
+      setTimeout(() => this.loadNetworkConfig(), 3000);
+    } catch (e) {
+      this.networkConfigResult.set({ ok: false, message: String(e) });
+    } finally {
+      this.savingNetworkConfig.set(false);
+    }
+  }
+
+  async restoreNetworkDhcp(): Promise<void> {
+    this.savingNetworkConfig.set(true);
+    this.networkConfigResult.set(null);
+    try {
+      const result = await this.tauri.restoreNetworkDhcp();
+      this.networkConfigResult.set({ ok: true, message: result });
+      // Recargar configuración después de restaurar
+      setTimeout(() => this.loadNetworkConfig(), 2000);
+    } catch (e) {
+      this.networkConfigResult.set({ ok: false, message: String(e) });
+    } finally {
+      this.savingNetworkConfig.set(false);
+    }
+  }
+
+  openAddPrinterDialog(ip: string): void {
+    this.addingPrinter.set(ip);
+    this.printerNameInput.set(`Impresora ${ip.split('.').pop()}`);
+    this.printResult.set(null); // Limpiar resultado anterior
+  }
+
+  closeAddPrinterDialog(): void {
+    this.addingPrinter.set(null);
+    this.printerNameInput.set('');
+    this.savingPrinter.set(false);
+  }
+
+  async confirmAddPrinter(): Promise<void> {
+    const ip = this.addingPrinter();
+    const name = this.printerNameInput().trim();
+    if (!ip || !name) return;
+
+    this.savingPrinter.set(true);
+    this.printResult.set(null);
+
+    try {
+      console.log(`🖨️ Agregando impresora: ${name} en ${ip}`);
+      const result = await this.tauri.addNetworkPrinter(ip, name);
+      console.log(`✅ Éxito:`, result);
+      
+      this.printResult.set({ ok: true, message: result });
+      this.closeAddPrinterDialog();
+      
+      // Esperar un momento antes de refrescar para que el sistema registre la impresora
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Refrescar lista de impresoras
+      await this.refresh();
+      
+      // Limpiar impresoras encontradas
+      this.foundPrinters.set([]);
+    } catch (e) {
+      console.error(`❌ Error al agregar impresora:`, e);
+      this.printResult.set({ ok: false, message: String(e) });
+      this.savingPrinter.set(false);
     }
   }
 }

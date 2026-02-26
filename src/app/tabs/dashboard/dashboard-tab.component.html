@@ -1,0 +1,151 @@
+<div class="flex flex-col gap-5 max-w-2xl">
+
+  <!-- Tarjetas resumen de servidor -->
+  <section aria-labelledby="dash-server-title">
+    <h2 class="section-title" id="dash-server-title">Servidor</h2>
+    <div class="grid grid-cols-3 gap-3">
+      <app-card padding="md">
+        <p class="label-xs">IP Local</p>
+        @if (loading()) { <span class="skeleton w-28"></span> }
+        @else { <p class="value-lg">{{ localIp() }}</p> }
+      </app-card>
+      <app-card padding="md">
+        <p class="label-xs">Puerto</p>
+        @if (loading()) { <span class="skeleton w-16"></span> }
+        @else { <p class="value-lg">{{ port() }}</p> }
+      </app-card>
+      <app-card padding="md">
+        <p class="label-xs">URL de acceso</p>
+        @if (loading()) { <span class="skeleton w-40"></span> }
+        @else {
+          <a class="text-blue-600 font-semibold text-sm hover:underline break-all"
+             [href]="frontendUrl()" target="_blank" rel="noopener noreferrer">
+            {{ frontendUrl() }}
+          </a>
+        }
+      </app-card>
+    </div>
+  </section>
+
+  <!-- Resumen impresoras -->
+  <section aria-labelledby="dash-printers-title">
+    <h2 class="section-title" id="dash-printers-title">
+      Impresoras
+      @if (!loading()) { <span class="badge">{{ printers().length }}</span> }
+    </h2>
+    @if (loading()) {
+      <div class="flex flex-col gap-2">
+        @for (_ of [1,2]; track $index) {
+          <app-card padding="md"><span class="skeleton w-48"></span></app-card>
+        }
+      </div>
+    } @else if (printers().length === 0) {
+      <app-card padding="md">
+        <p class="text-sm text-slate-400">No hay impresoras instaladas.</p>
+      </app-card>
+    } @else {
+      <div class="flex flex-col gap-2">
+        @for (p of printers(); track p.name) {
+          <app-card padding="sm">
+            <div class="flex items-center justify-between gap-3 px-1">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full shrink-0"
+                      [class.bg-green-500]="p.status === 'Disponible'"
+                      [class.bg-slate-400]="p.status !== 'Disponible'"></span>
+                <span class="font-medium text-sm text-slate-900">{{ p.name }}</span>
+                @if (p.is_default) { <span class="badge-blue">Predeterminada</span> }
+              </div>
+              <span class="text-xs text-slate-400">{{ p.status }}</span>
+            </div>
+          </app-card>
+        }
+      </div>
+    }
+  </section>
+
+  <!-- Resumen Bluetooth -->
+  <section aria-labelledby="dash-bt-title">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="section-title mb-0" id="dash-bt-title">
+        Bluetooth
+        @if (bluetoothLoaded()) { <span class="badge">{{ bluetoothDevices().length }}</span> }
+      </h2>
+      <button appBtn variant="ghost" size="sm" (click)="loadBluetoothClick.emit()" [disabled]="loadingBluetooth()">
+        <ng-icon name="matRefresh" size="14" [class.animate-spin]="loadingBluetooth()"></ng-icon>
+        {{ bluetoothLoaded() ? 'Actualizar' : 'Cargar' }}
+      </button>
+    </div>
+    @if (!bluetoothLoaded() && !loadingBluetooth()) {
+      <app-card padding="md">
+        <p class="text-sm text-slate-400">Pulsa "Cargar" para listar dispositivos.</p>
+      </app-card>
+    } @else if (loadingBluetooth()) {
+      <app-card padding="md" class="flex items-center gap-2 text-sm text-slate-500">
+        <span class="w-4 h-4 border-2 border-blue-500 border-r-transparent rounded-full animate-spin shrink-0"></span>
+        Obteniendo dispositivos Bluetooth...
+      </app-card>
+    } @else if (bluetoothDevices().length === 0) {
+      <app-card padding="md">
+        <p class="text-sm text-slate-400">Sin dispositivos emparejados.</p>
+      </app-card>
+    } @else {
+      <div class="flex flex-col gap-2">
+        @for (d of bluetoothDevices(); track d.address) {
+          <app-card padding="sm">
+            <div class="flex items-center justify-between px-1">
+              <div class="flex items-center gap-2">
+                <ng-icon name="matBluetooth" size="16"
+                         [class.text-blue-500]="d.is_connected"
+                         [class.text-slate-300]="!d.is_connected"></ng-icon>
+                <div>
+                  <p class="text-sm font-medium text-slate-900">{{ d.name }}</p>
+                  <p class="text-xs text-slate-400 font-mono">{{ d.address }}</p>
+                </div>
+              </div>
+              <span class="text-xs font-medium px-2 py-0.5 rounded-full"
+                    [class.bg-blue-100]="d.is_connected" [class.text-blue-700]="d.is_connected"
+                    [class.bg-slate-100]="!d.is_connected" [class.text-slate-500]="!d.is_connected">
+                {{ d.is_connected ? 'Conectado' : 'Emparejado' }}
+              </span>
+            </div>
+          </app-card>
+        }
+      </div>
+    }
+  </section>
+
+  <!-- Dispositivos USB/COM -->
+  <section aria-labelledby="dash-serial-title">
+    <h2 class="section-title" id="dash-serial-title">
+      Dispositivos USB / COM
+      @if (!loading()) { <span class="badge">{{ serialPorts().length }}</span> }
+      <span class="ml-auto flex items-center gap-1 text-[11px] font-normal normal-case tracking-normal text-slate-400">
+        <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span> Tiempo real
+      </span>
+    </h2>
+    @if (serialPorts().length === 0 && !loading()) {
+      <app-card padding="md">
+        <p class="text-sm text-slate-400">Sin dispositivos USB/COM conectados.</p>
+      </app-card>
+    } @else {
+      <div class="flex flex-col gap-1.5">
+        @for (p of serialPorts(); track p.port_name) {
+          <app-card padding="sm">
+            <div class="flex items-center justify-between px-1">
+              <div class="flex items-center gap-2">
+                <ng-icon name="matUsb" size="16" class="text-slate-400"></ng-icon>
+                <span class="font-mono text-sm font-medium text-slate-900">{{ p.port_name }}</span>
+              </div>
+              <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                    [class.bg-blue-100]="p.device_type === 'USB-Serial'" [class.text-blue-700]="p.device_type === 'USB-Serial'"
+                    [class.bg-violet-100]="p.device_type === 'USB-CDC'" [class.text-violet-700]="p.device_type === 'USB-CDC'"
+                    [class.bg-slate-100]="p.device_type === 'COM'" [class.text-slate-600]="p.device_type === 'COM'">
+                {{ p.device_type }}
+              </span>
+            </div>
+          </app-card>
+        }
+      </div>
+    }
+  </section>
+</div>

@@ -29,3 +29,4 @@ tauri-plugin-shell = "2"
 tauri-plugin-autostart = "2"
 chrono = { version = "0.4", features = ["clock"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
+tauri-plugin-single-instance = "2"

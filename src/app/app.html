@@ -1,569 +1,170 @@
-<div class="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-sans antialiased">
-  <!-- Header -->
-  <header class="flex items-center justify-between px-6 h-14 bg-white border-b border-slate-200 shadow-sm sticky top-0 z-10">
-    <div class="flex items-center gap-2.5 font-semibold text-base text-slate-900 tracking-tight">
-      <svg class="w-5.5 h-5.5 text-blue-500 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+<div class="h-screen flex bg-slate-50 text-slate-900 font-sans antialiased overflow-hidden">
+
+  <!-- ─── Barra lateral de navegación ─────────────────────────────────── -->
+  <aside class="w-16 bg-white border-r border-slate-200 flex flex-col items-center pt-4 pb-3 gap-1 shrink-0">
+    <div class="mb-3 flex items-center justify-center w-9 h-9">
+      <svg class="w-7 h-7 text-blue-600" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M6 9V2h12v7" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
         <rect x="2" y="9" width="20" height="9" rx="2" stroke="currentColor" stroke-width="1.8"/>
         <path d="M6 14h12M6 18v4h12v-4" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
         <circle cx="18" cy="13" r="1" fill="currentColor"/>
       </svg>
-      <span>Printer Monitor</span>
-      @if (!loading()) {
-        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider"
-              [class.bg-amber-100]="isDev()"
-              [class.text-amber-700]="isDev()"
-              [class.bg-emerald-100]="!isDev()"
-              [class.text-emerald-700]="!isDev()"
-              aria-label="Modo de ejecución">
-          {{ isDev() ? 'Dev' : 'Prod' }}
-        </span>
-      }
     </div>
-    <div class="flex items-center gap-2">
-      <!-- Toggle Autostart -->
-      @if (!loading()) {
-        <button
-          class="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-          [class.bg-blue-600]="autostartEnabled()"
-          [class.text-white]="autostartEnabled()"
-          [class.hover:bg-blue-700]="autostartEnabled()"
-          [class.bg-slate-100]="!autostartEnabled()"
-          [class.text-slate-600]="!autostartEnabled()"
-          [class.hover:bg-slate-200]="!autostartEnabled()"
-          (click)="toggleAutostart()"
-          [disabled]="togglingAutostart()"
-          [attr.aria-pressed]="autostartEnabled()"
-          title="Iniciar con el sistema">
-          @if (togglingAutostart()) {
-            <span class="inline-block w-3.5 h-3.5 border-2 border-current border-r-transparent rounded-full animate-spin shrink-0" aria-hidden="true"></span>
-          } @else {
-            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-            </svg>
-          }
-          Autostart
-        </button>
-      }
+
+    @for (tab of tabs; track tab.id) {
       <button
-        class="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-sm font-medium text-slate-500 hover:text-slate-900 hover:bg-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-        (click)="refresh()"
-        [disabled]="loading()"
-        aria-label="Actualizar">
-        <svg class="w-4 h-4 shrink-0" [class.animate-spin]="loading()" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M4 4v5h5M20 20v-5h-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M4.06 15a9 9 0 1 0 .91-4.62" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-        </svg>
-        Actualizar
+        class="w-11 h-11 flex flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+        [class]="activeTab() === tab.id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'"
+        (click)="setActiveTab(tab.id)"
+        [attr.aria-pressed]="activeTab() === tab.id"
+        [title]="tab.label">
+        <ng-icon [name]="tab.icon" size="20"></ng-icon>
       </button>
+    }
+  </aside>
+
+  <!-- ─── Área principal ────────────────────────────────────────────────── -->
+  <div class="flex-1 flex flex-col min-w-0">
+
+    <!-- Header -->
+    <header class="flex items-center justify-between px-5 h-14 bg-white border-b border-slate-200 shrink-0">
+      <div class="flex items-center gap-2 font-semibold text-[15px] text-slate-800 tracking-tight">
+        <span>Centro de Ayuda CODICORE</span>
+        @if (!loading()) {
+          <span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider"
+                [class.bg-amber-100]="isDev()" [class.text-amber-700]="isDev()"
+                [class.bg-emerald-100]="!isDev()" [class.text-emerald-700]="!isDev()">
+            {{ isDev() ? 'Dev' : 'Prod' }}
+          </span>
+        }
+      </div>
+      <div class="flex items-center gap-2">
+        @if (!loading()) {
+          <button appBtn [variant]="autostartEnabled() ? 'primary' : 'secondary'" size="sm"
+                  (click)="toggleAutostart()" [disabled]="togglingAutostart()"
+                  [attr.aria-pressed]="autostartEnabled()" title="Iniciar con el sistema">
+            @if (togglingAutostart()) {
+              <span class="inline-block w-3 h-3 border-2 border-current border-r-transparent rounded-full animate-spin" aria-hidden="true"></span>
+            } @else {
+              <ng-icon name="matSettings" size="14"></ng-icon>
+            }
+            Autostart
+          </button>
+        }
+        <button appBtn variant="ghost" size="sm" (click)="refresh()" [disabled]="loading()" aria-label="Actualizar">
+          <ng-icon name="matRefresh" size="16" [class.animate-spin]="loading()"></ng-icon>
+          Actualizar
+        </button>
+      </div>
+    </header>
+
+    <!-- Contenido de cada tab -->
+    <div class="flex-1 overflow-y-auto p-5">
+
+      <!-- Error global -->
+      @if (error()) {
+        <div class="flex items-start gap-2 p-3 mb-4 rounded-lg text-sm border bg-red-50 border-red-200 text-red-600" role="alert">
+          <ng-icon name="matClose" size="16" class="shrink-0 mt-px"></ng-icon>
+          <span>{{ error() }}</span>
+        </div>
+      }
+
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <!-- TAB: DASHBOARD                                                  -->
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      @if (activeTab() === 'dashboard') {
+        <app-dashboard-tab
+          [loading]="loading()"
+          [localIp]="localIp()"
+          [port]="port()"
+          [frontendUrl]="frontendUrl()"
+          [printers]="printers()"
+          [bluetoothDevices]="bluetoothDevices()"
+          [bluetoothLoaded]="bluetoothLoaded()"
+          [loadingBluetooth]="loadingBluetooth()"
+          [serialPorts]="serialPorts()"
+          (loadBluetoothClick)="loadBluetooth()" />
+      }
+
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <!-- TAB: IMPRESORAS                                                 -->
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      @if (activeTab() === 'printers') {
+        <app-printers-tab
+          [loading]="loading()"
+          [printers]="printers()"
+          [printingFor]="printingFor()"
+          [printResult]="printResult()"
+          [renamingPrinter]="renamingPrinter()"
+          [renameValue]="renameValue()"
+          [renamingFor]="renamingFor()"
+          [renameResult]="renameResult()"
+          [customIp]="customIp()"
+          [customMask]="customMask()"
+          [scanningPrinters]="scanningPrinters()"
+          [foundPrinters]="foundPrinters()"
+          [networkConfig]="networkConfig()"
+          [loadingNetworkConfig]="loadingNetworkConfig()"
+          [savingNetworkConfig]="savingNetworkConfig()"
+          [networkConfigResult]="networkConfigResult()"
+          [editingNetworkConfig]="editingNetworkConfig()"
+          [tempIp]="tempIp()"
+          [tempMask]="tempMask()"
+          [tempGateway]="tempGateway()"
+          [addingPrinter]="addingPrinter()"
+          [printerNameInput]="printerNameInput()"
+          [savingPrinter]="savingPrinter()"
+          (printTestClick)="printTest($event.printer, $event.size)"
+          (startRenameClick)="startRename($event)"
+          (cancelRenameClick)="cancelRename()"
+          (confirmRenameClick)="confirmRename($event)"
+          (renameValueChange)="renameValue.set($event)"
+          (customIpChange)="customIp.set($event)"
+          (customMaskChange)="customMask.set($event)"
+          (scanTcpIpPrintersClick)="scanTcpIpPrinters()"
+          (loadNetworkConfigClick)="loadNetworkConfig()"
+          (startEditNetworkConfigClick)="startEditNetworkConfig()"
+          (cancelEditNetworkConfigClick)="cancelEditNetworkConfig()"
+          (saveNetworkConfigClick)="saveNetworkConfig()"
+          (restoreNetworkDhcpClick)="restoreNetworkDhcp()"
+          (tempIpChange)="tempIp.set($event)"
+          (tempMaskChange)="tempMask.set($event)"
+          (tempGatewayChange)="tempGateway.set($event)"
+          (openAddPrinterDialogClick)="openAddPrinterDialog($event)"
+          (closeAddPrinterDialogClick)="closeAddPrinterDialog()"
+          (printerNameInputChange)="printerNameInput.set($event)"
+          (confirmAddPrinterClick)="confirmAddPrinter()" />
+      }
+
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <!-- TAB: RED / TCP-IP                                               -->
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      @if (activeTab() === 'network') {
+        <app-network-tab
+          [scanningNetwork]="scanningNetwork()"
+          [networkDevices]="networkDevices()"
+          [networkError]="networkError()"
+          [settings]="settings()"
+          [portDev]="portDev()"
+          [portProd]="portProd()"
+          [savingPort]="savingPort()"
+          [portSaveResult]="portSaveResult()"
+          (scanNetworkClick)="scanNetwork()"
+          (savePortClick)="savePort($event.key, $event.value)" />
+      }
+
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      <!-- TAB: BLUETOOTH                                                  -->
+      <!-- ═══════════════════════════════════════════════════════════════ -->
+      @if (activeTab() === 'bluetooth') {
+        <app-bluetooth-tab
+          [bluetoothDevices]="bluetoothDevices()"
+          [bluetoothLoaded]="bluetoothLoaded()"
+          [loadingBluetooth]="loadingBluetooth()"
+          [bluetoothError]="bluetoothError()"
+          (loadBluetoothClick)="loadBluetooth()" />
+      }
+
     </div>
-  </header>
-
-  <main class="flex-1 p-6 w-full max-w-205 mx-auto flex flex-col gap-6">
-
-    <!-- Server Info Cards -->
-    <section aria-labelledby="server-heading">
-      <h2 class="text-[13px] font-semibold uppercase tracking-wider text-slate-500 mb-3" id="server-heading">
-        Informacion del Servidor
-      </h2>
-      <div class="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3">
-        <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
-          <span class="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">IP Local</span>
-          @if (loading()) {
-            <span class="block h-5 w-28 rounded-md bg-slate-200 animate-pulse" aria-label="Cargando IP"></span>
-          } @else {
-            <span class="block text-[17px] font-semibold text-slate-900 break-all">{{ localIp() }}</span>
-          }
-        </div>
-        <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
-          <span class="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Puerto</span>
-          @if (loading()) {
-            <span class="block h-5 w-16 rounded-md bg-slate-200 animate-pulse" aria-label="Cargando puerto"></span>
-          } @else {
-            <span class="block text-[17px] font-semibold text-slate-900 break-all">{{ port() }}</span>
-          }
-        </div>
-        <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm col-span-full">
-          <span class="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">URL de Acceso</span>
-          @if (loading()) {
-            <span class="block h-5 w-48 rounded-md bg-slate-200 animate-pulse" aria-label="Cargando URL"></span>
-          } @else {
-            <a class="block text-[17px] font-semibold text-blue-600 break-all hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 rounded-sm"
-               [href]="frontendUrl()" target="_blank" rel="noopener noreferrer">
-              {{ frontendUrl() }}
-            </a>
-          }
-        </div>
-      </div>
-    </section>
-
-    <!-- Port Configuration -->
-    <section aria-labelledby="ports-heading">
-      <h2 class="text-[13px] font-semibold uppercase tracking-wider text-slate-500 mb-3" id="ports-heading">
-        Configuración de Puertos
-      </h2>
-      @if (loading()) {
-        <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm flex gap-4">
-          <span class="block h-5 w-40 rounded-md bg-slate-200 animate-pulse"></span>
-          <span class="block h-5 w-40 rounded-md bg-slate-200 animate-pulse"></span>
-        </div>
-      } @else {
-        <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm flex flex-col gap-4">
-          <div class="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
-            <!-- Puerto desarrollo (fijo) -->
-            <div class="flex flex-col gap-1.5">
-              <span class="text-xs font-medium text-slate-500 uppercase tracking-wider">
-                Puerto desarrollo
-                <span class="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700">DEV</span>
-              </span>
-              <div class="flex items-center gap-2">
-                <span
-                  class="inline-flex items-center w-24 h-8 px-2 rounded-md border border-slate-100 bg-slate-50 text-sm font-mono text-slate-400"
-                  aria-label="Puerto de desarrollo fijo">{{ portDev() }}</span>
-                <span class="text-xs text-slate-400 italic">Fijo, no editable</span>
-              </div>
-            </div>
-            <!-- Puerto producción -->
-            <div class="flex flex-col gap-1.5">
-              <label class="text-xs font-medium text-slate-500 uppercase tracking-wider" for="port-prod">
-                Puerto producción
-                <span class="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">PROD</span>
-              </label>
-              <div class="flex items-center gap-2">
-                <input
-                  id="port-prod"
-                  type="number"
-                  min="1024" max="65535"
-                  class="w-24 h-8 px-2 rounded-md border border-slate-200 text-sm font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
-                  [value]="portProd()"
-                  [disabled]="savingPort()"
-                  #portProdInput
-                  aria-label="Puerto para modo producción" />
-                <button
-                  class="h-8 px-3 rounded-md text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-                  (click)="savePort('port_prod', portProdInput.value)"
-                  [disabled]="savingPort()"
-                  aria-label="Guardar puerto producción">
-                  Guardar
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <p class="text-xs text-slate-400">
-            Si el puerto preferido está ocupado al iniciar, se busca automáticamente el siguiente disponible y se guarda en la base de datos.
-          </p>
-
-          @if (portSaveResult()) {
-            <div class="flex items-center gap-2 text-sm"
-                 [class.text-green-600]="portSaveResult()!.ok"
-                 [class.text-red-600]="!portSaveResult()!.ok"
-                 role="status">
-              @if (portSaveResult()!.ok) {
-                <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              } @else {
-                <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.8"/>
-                  <path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-                </svg>
-              }
-              {{ portSaveResult()!.message }}
-            </div>
-          }
-        </div>
-      }
-    </section>
-
-    <!-- Error Banner -->
-    @if (error()) {
-      <div class="flex items-start gap-2.5 p-3 rounded-lg text-sm border bg-red-50 border-red-200 text-red-600" role="alert">
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" class="w-4.5 h-4.5 shrink-0 mt-px">
-          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.8"/>
-          <path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-        </svg>
-        <span>{{ error() }}</span>
-      </div>
-    }
-
-    <!-- Print Result Banner -->
-    @if (printResult()) {
-      <div class="flex items-start gap-2.5 p-3 rounded-lg text-sm border"
-           [class.bg-green-50]="printResult()!.ok"
-           [class.border-green-200]="printResult()!.ok"
-           [class.text-green-600]="printResult()!.ok"
-           [class.bg-red-50]="!printResult()!.ok"
-           [class.border-red-200]="!printResult()!.ok"
-           [class.text-red-600]="!printResult()!.ok"
-           role="status">
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" class="w-4.5 h-4.5 shrink-0 mt-px">
-          @if (printResult()!.ok) {
-            <path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          } @else {
-            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          }
-        </svg>
-        <span>{{ printResult()!.message }}</span>
-      </div>
-    }
-
-    <!-- Printers Section -->
-    <section aria-labelledby="printers-heading">
-      <h2 class="text-[13px] font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-2" id="printers-heading">
-        Impresoras
-        @if (!loading()) {
-          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-200 text-slate-500">{{ printers().length }}</span>
-        }
-      </h2>
-
-      @if (loading()) {
-        <div class="flex flex-col gap-2.5" aria-busy="true" aria-label="Cargando impresoras">
-          @for (_ of [1,2,3]; track $index) {
-            <div class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm flex flex-col gap-3 pointer-events-none">
-              <div class="h-5 w-[60%] rounded-md bg-slate-200 animate-pulse"></div>
-              <div class="h-5 w-16 rounded-md bg-slate-200 animate-pulse"></div>
-              <div class="flex gap-2 flex-wrap">
-                <span class="h-8 w-17 rounded-md bg-slate-200 animate-pulse"></span>
-                <span class="h-8 w-17 rounded-md bg-slate-200 animate-pulse"></span>
-              </div>
-            </div>
-          }
-        </div>
-      } @else if (printers().length === 0) {
-        <div class="flex flex-col items-center justify-center gap-3 py-12 px-6 bg-white border border-dashed border-slate-200 rounded-lg text-slate-500 text-center" role="status">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" class="w-10 h-10 opacity-40">
-            <path d="M6 9V2h12v7M2 9h20v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
-          </svg>
-          <p class="text-[15px] max-w-[320px]">No se encontraron impresoras instaladas en este equipo.</p>
-        </div>
-      } @else {
-        <ul class="flex flex-col gap-2.5" aria-label="Lista de impresoras">
-          @for (printer of printers(); track printer.name) {
-            <li class="bg-white border border-slate-200 rounded-lg p-4 shadow-sm flex flex-col gap-3">
-              <div class="flex items-center justify-between gap-3">
-                <div class="flex items-center gap-2 flex-wrap min-w-0">
-                  @if (renamingPrinter() === printer.name) {
-                    <input
-                      class="h-7 px-2 rounded-md border border-blue-300 text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 w-52 min-w-0"
-                      type="text"
-                      [value]="renameValue()"
-                      (input)="renameValue.set($any($event.target).value)"
-                      (keydown.enter)="confirmRename(printer)"
-                      (keydown.escape)="cancelRename()"
-                      aria-label="Nuevo nombre de la impresora"
-                      autofocus />
-                    <button
-                      class="inline-flex items-center justify-center w-7 h-7 rounded-md bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 transition-colors"
-                      (click)="confirmRename(printer)"
-                      [disabled]="renamingFor() === printer.name"
-                      aria-label="Confirmar nuevo nombre">
-                      @if (renamingFor() === printer.name) {
-                        <span class="inline-block w-3 h-3 border-2 border-white border-r-transparent rounded-full animate-spin" aria-hidden="true"></span>
-                      } @else {
-                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                      }
-                    </button>
-                    <button
-                      class="inline-flex items-center justify-center w-7 h-7 rounded-md bg-slate-100 text-slate-600 text-sm hover:bg-slate-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 transition-colors"
-                      (click)="cancelRename()"
-                      aria-label="Cancelar renombrado">
-                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-                    </button>
-                  } @else {
-                    <span class="font-semibold text-[15px] text-slate-900 whitespace-nowrap overflow-hidden text-ellipsis max-w-90">{{ printer.name }}</span>
-                    @if (printer.is_default) {
-                      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">Predeterminada</span>
-                    }
-                    <button
-                      class="inline-flex items-center justify-center w-6 h-6 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-                      (click)="startRename(printer)"
-                      [attr.aria-label]="'Renombrar ' + printer.name">
-                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                      </svg>
-                    </button>
-                  }
-                </div>
-                <span class="inline-flex items-center gap-1.5 text-[13px] font-medium text-slate-500 whitespace-nowrap shrink-0" [attr.title]="printer.status">
-                  <span class="block w-2 h-2 rounded-full shrink-0"
-                        [class.bg-green-500]="printer.status === 'Disponible'"
-                        [class.bg-slate-400]="printer.status !== 'Disponible'"></span>
-                  {{ printer.status }}
-                </span>
-              </div>
-              <div class="flex gap-2 flex-wrap" role="group" [attr.aria-label]="'Imprimir prueba con ' + printer.name">
-                <button
-                  class="inline-flex items-center gap-1.5 px-3 h-8 bg-transparent border border-slate-200 text-slate-900 rounded-md text-sm font-medium cursor-pointer transition-colors hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-                  (click)="printTest(printer, 'a4')"
-                  [disabled]="printingFor() !== null"
-                  [attr.aria-busy]="isPrinting(printer, 'a4')"
-                  title="Imprimir hoja de prueba A4">
-                  @if (isPrinting(printer, 'a4')) {
-                    <span class="inline-block w-3.25 h-3.25 border-2 border-current border-r-transparent rounded-full animate-spin shrink-0" aria-hidden="true"></span>
-                  }
-                  A4
-                </button>
-                <button
-                  class="inline-flex items-center gap-1.5 px-3 h-8 bg-transparent border border-slate-200 text-slate-900 rounded-md text-sm font-medium cursor-pointer transition-colors hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-                  (click)="printTest(printer, 'thermal_50mm')"
-                  [disabled]="printingFor() !== null"
-                  [attr.aria-busy]="isPrinting(printer, 'thermal_50mm')"
-                  title="Imprimir ticket de prueba 50mm">
-                  @if (isPrinting(printer, 'thermal_50mm')) {
-                    <span class="inline-block w-3.25 h-3.25 border-2 border-current border-r-transparent rounded-full animate-spin shrink-0" aria-hidden="true"></span>
-                  }
-                  50mm
-                </button>
-                <button
-                  class="inline-flex items-center gap-1.5 px-3 h-8 bg-transparent border border-slate-200 text-slate-900 rounded-md text-sm font-medium cursor-pointer transition-colors hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-                  (click)="printTest(printer, 'thermal_80mm')"
-                  [disabled]="printingFor() !== null"
-                  [attr.aria-busy]="isPrinting(printer, 'thermal_80mm')"
-                  title="Imprimir ticket de prueba 80mm">
-                  @if (isPrinting(printer, 'thermal_80mm')) {
-                    <span class="inline-block w-3.25 h-3.25 border-2 border-current border-r-transparent rounded-full animate-spin shrink-0" aria-hidden="true"></span>
-                  }
-                  80mm
-                </button>
-              </div>
-              @if (renameResult() !== null && renameResult()!.printerName === printer.name) {
-                <div class="flex items-center gap-1.5 text-xs"
-                     [class.text-green-600]="renameResult()!.ok"
-                     [class.text-red-600]="!renameResult()!.ok"
-                     role="status">
-                  @if (renameResult()!.ok) {
-                    <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  } @else {
-                    <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-                  }
-                  {{ renameResult()!.message }}
-                </div>
-              }
-            </li>
-          }
-        </ul>
-      }
-    </section>
-
-    <!-- USB / COM Devices Section -->
-    <section aria-labelledby="serial-heading">
-      <h2 class="text-[13px] font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-2" id="serial-heading">
-        <svg class="w-4 h-4 text-slate-400 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <rect x="2" y="7" width="20" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
-          <path d="M8 7V5M12 7V4M16 7V5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-        </svg>
-        Dispositivos USB / COM
-        @if (!loading()) {
-          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-200 text-slate-500">{{ serialPorts().length }}</span>
-        }
-        <span class="ml-auto inline-flex items-center gap-1.5 text-[11px] font-normal normal-case tracking-normal text-slate-400">
-          <span class="inline-block w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse shrink-0"></span>
-          Tiempo real
-        </span>
-      </h2>
-
-      @if (loading()) {
-        <div class="flex flex-col gap-2" aria-busy="true" aria-label="Detectando dispositivos">
-          @for (_ of [1, 2]; track $index) {
-            <div class="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-sm flex items-center gap-3">
-              <span class="block h-4 w-36 rounded-md bg-slate-200 animate-pulse"></span>
-              <span class="block h-5 w-20 rounded-full bg-slate-200 animate-pulse ml-auto"></span>
-            </div>
-          }
-        </div>
-      } @else if (serialPorts().length === 0) {
-        <div class="flex flex-col items-center justify-center gap-2 py-8 px-6 bg-white border border-dashed border-slate-200 rounded-lg text-slate-400 text-center text-sm" role="status">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" class="w-8 h-8 opacity-40">
-            <rect x="2" y="7" width="20" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
-            <path d="M8 7V5M12 7V4M16 7V5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
-          No hay dispositivos USB/COM conectados.
-        </div>
-      } @else {
-        <ul class="flex flex-col gap-1.5" aria-label="Dispositivos USB y COM conectados">
-          @for (port of serialPorts(); track port.port_name) {
-            <li class="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-sm flex items-center justify-between gap-3">
-              <div class="flex items-center gap-2.5 min-w-0">
-                <span class="block w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
-                <span class="font-mono text-[13px] font-medium text-slate-900 truncate">{{ port.port_name }}</span>
-              </div>
-              <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full shrink-0"
-                    [class.bg-blue-100]="port.device_type === 'USB-Serial'"
-                    [class.text-blue-700]="port.device_type === 'USB-Serial'"
-                    [class.bg-violet-100]="port.device_type === 'USB-CDC'"
-                    [class.text-violet-700]="port.device_type === 'USB-CDC'"
-                    [class.bg-slate-100]="port.device_type === 'COM'"
-                    [class.text-slate-600]="port.device_type === 'COM'">
-                {{ port.device_type }}
-              </span>
-            </li>
-          }
-        </ul>
-      }
-    </section>
-
-    <!-- Network Devices Section -->
-    <section aria-labelledby="network-heading">
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-[13px] font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-2" id="network-heading">
-          <svg class="w-4 h-4 text-slate-400 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <rect x="2" y="3" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.8"/>
-            <rect x="15" y="3" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.8"/>
-            <rect x="8.5" y="16" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.8"/>
-            <path d="M5.5 8v3h13V8M12 11v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          Equipos en Red
-          @if (networkDevices().length > 0 && !scanningNetwork()) {
-            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-200 text-slate-500">{{ networkDevices().length }}</span>
-          }
-        </h2>
-        <button
-          class="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-sm font-medium text-slate-500 hover:text-slate-900 hover:bg-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-          (click)="scanNetwork()"
-          [disabled]="scanningNetwork()"
-          aria-label="Escanear red local">
-          @if (scanningNetwork()) {
-            <span class="inline-block w-3.5 h-3.5 border-2 border-current border-r-transparent rounded-full animate-spin shrink-0" aria-hidden="true"></span>
-            Escaneando...
-          } @else {
-            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="1.8"/>
-              <path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-            </svg>
-            Escanear red
-          }
-        </button>
-      </div>
-
-      @if (networkError()) {
-        <div class="flex items-start gap-2.5 p-3 rounded-lg text-sm border bg-red-50 border-red-200 text-red-600" role="alert">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" class="w-4.5 h-4.5 shrink-0 mt-px">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.8"/>
-            <path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
-          <span>{{ networkError() }}</span>
-        </div>
-      } @else if (scanningNetwork()) {
-        <div class="flex items-center gap-3 p-4 bg-white border border-slate-200 rounded-lg shadow-sm text-sm text-slate-500" aria-live="polite" aria-busy="true">
-          <span class="inline-block w-4 h-4 border-2 border-blue-500 border-r-transparent rounded-full animate-spin shrink-0" aria-hidden="true"></span>
-          Escaneando subred local, esto puede tardar unos segundos...
-        </div>
-      } @else if (networkDevices().length === 0) {
-        <div class="flex flex-col items-center justify-center gap-3 py-10 px-6 bg-white border border-dashed border-slate-200 rounded-lg text-slate-400 text-center text-sm" role="status">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" class="w-9 h-9 opacity-40">
-            <rect x="2" y="3" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.8"/>
-            <rect x="15" y="3" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.8"/>
-            <rect x="8.5" y="16" width="7" height="5" rx="1" stroke="currentColor" stroke-width="1.8"/>
-            <path d="M5.5 8v3h13V8M12 11v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          Pulsa "Escanear red" para descubrir equipos en la subred local.
-        </div>
-      } @else {
-        <ul class="flex flex-col gap-1.5" aria-label="Equipos encontrados en la red">
-          @for (device of networkDevices(); track device.ip) {
-            <li class="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-sm flex items-center justify-between gap-3">
-              <div class="flex items-center gap-2 min-w-0">
-                <span class="block w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
-                <span class="font-medium text-[14px] text-slate-900 font-mono">{{ device.ip }}</span>
-                @if (device.hostname) {
-                  <span class="text-[13px] text-slate-400 truncate">{{ device.hostname }}</span>
-                }
-              </div>
-              <span class="text-xs text-green-600 font-medium shrink-0">En linea</span>
-            </li>
-          }
-        </ul>
-      }
-    </section>
-
-    <!-- Bluetooth Section -->
-    <section aria-labelledby="bluetooth-heading">
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-[13px] font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-2" id="bluetooth-heading">
-          <svg class="w-4 h-4 text-slate-400 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M6.5 6.5l11 11L12 23V1l5.5 5.5-11 11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          Dispositivos Bluetooth
-          @if (bluetoothLoaded() && !loadingBluetooth()) {
-            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-200 text-slate-500">{{ bluetoothDevices().length }}</span>
-          }
-        </h2>
-        <button
-          class="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-sm font-medium text-slate-500 hover:text-slate-900 hover:bg-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-          (click)="loadBluetooth()"
-          [disabled]="loadingBluetooth()"
-          aria-label="Actualizar dispositivos Bluetooth">
-          @if (loadingBluetooth()) {
-            <span class="inline-block w-3.5 h-3.5 border-2 border-current border-r-transparent rounded-full animate-spin shrink-0" aria-hidden="true"></span>
-            Cargando...
-          } @else {
-            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M4 4v5h5M20 20v-5h-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="M4.06 15a9 9 0 1 0 .91-4.62" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-            </svg>
-            {{ bluetoothLoaded() ? 'Actualizar' : 'Cargar Bluetooth' }}
-          }
-        </button>
-      </div>
-
-      @if (bluetoothError()) {
-        <div class="flex items-start gap-2.5 p-3 rounded-lg text-sm border bg-red-50 border-red-200 text-red-600" role="alert">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" class="w-4.5 h-4.5 shrink-0 mt-px">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.8"/>
-            <path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
-          <span>{{ bluetoothError() }}</span>
-        </div>
-      } @else if (loadingBluetooth()) {
-        <div class="flex items-center gap-3 p-4 bg-white border border-slate-200 rounded-lg shadow-sm text-sm text-slate-500" aria-live="polite" aria-busy="true">
-          <span class="inline-block w-4 h-4 border-2 border-blue-500 border-r-transparent rounded-full animate-spin shrink-0" aria-hidden="true"></span>
-          Obteniendo dispositivos Bluetooth...
-        </div>
-      } @else if (!bluetoothLoaded()) {
-        <div class="flex flex-col items-center justify-center gap-3 py-10 px-6 bg-white border border-dashed border-slate-200 rounded-lg text-slate-400 text-center text-sm" role="status">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" class="w-9 h-9 opacity-40">
-            <path d="M6.5 6.5l11 11L12 23V1l5.5 5.5-11 11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          Pulsa "Cargar Bluetooth" para listar los dispositivos emparejados.
-        </div>
-      } @else if (bluetoothDevices().length === 0) {
-        <div class="flex flex-col items-center justify-center gap-3 py-10 px-6 bg-white border border-dashed border-slate-200 rounded-lg text-slate-400 text-center text-sm" role="status">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" class="w-9 h-9 opacity-40">
-            <path d="M6.5 6.5l11 11L12 23V1l5.5 5.5-11 11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          No se encontraron dispositivos Bluetooth emparejados.
-        </div>
-      } @else {
-        <ul class="flex flex-col gap-1.5" aria-label="Dispositivos Bluetooth">
-          @for (device of bluetoothDevices(); track device.address) {
-            <li class="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-sm flex items-center justify-between gap-3">
-              <div class="flex items-center gap-2 min-w-0">
-                <svg class="w-4 h-4 shrink-0"
-                     [class.text-blue-500]="device.is_connected"
-                     [class.text-slate-300]="!device.is_connected"
-                     viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M6.5 6.5l11 11L12 23V1l5.5 5.5-11 11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-                <div class="min-w-0">
-                  <p class="font-medium text-[14px] text-slate-900 truncate">{{ device.name }}</p>
-                  <p class="text-[12px] text-slate-400 font-mono">{{ device.address }}</p>
-                </div>
-              </div>
-              <span class="text-xs font-medium shrink-0 px-2 py-0.5 rounded-full"
-                    [class.bg-blue-100]="device.is_connected"
-                    [class.text-blue-700]="device.is_connected"
-                    [class.bg-slate-100]="!device.is_connected"
-                    [class.text-slate-500]="!device.is_connected">
-                {{ device.is_connected ? 'Conectado' : 'Emparejado' }}
-              </span>
-            </li>
-          }
-        </ul>
-      }
-    </section>
-
-  </main>
+  </div>
 </div>
-

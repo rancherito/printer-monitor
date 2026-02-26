@@ -8,5 +8,11 @@
   <!-- Permite que la app acepte conexiones de red entrantes (servidor local) -->
   <key>com.apple.security.network.server</key>
   <true/>
+  <!-- Permite acceso a archivos del usuario (necesario para CUPS) -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+  <!-- Deshabilita sandbox de App Store para permitir comandos de sistema -->
+  <key>com.apple.security.app-sandbox</key>
+  <false/>
 </dict>
 </plist>

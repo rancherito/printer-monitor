@@ -44,6 +44,13 @@ export interface AppSettings {
   extra: Record<string, string>;
 }
 
+export interface NetworkConfig {
+  ip: string;
+  mask: string;
+  gateway: string;
+  interface: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class TauriService {
   async getSystemInfo(): Promise<SystemInfo> {
@@ -96,5 +103,25 @@ export class TauriService {
 
   async getSerialPorts(): Promise<SerialPort[]> {
     return invoke<SerialPort[]>('get_serial_ports');
+  }
+
+  async scanTcpIpPrinters(ip: string, mask: string): Promise<string[]> {
+    return invoke<string[]>('scan_tcp_ip_printers', { ip, mask });
+  }
+
+  async getNetworkConfig(): Promise<NetworkConfig> {
+    return invoke<NetworkConfig>('get_network_config');
+  }
+
+  async setNetworkConfig(ip: string, mask: string, gateway: string): Promise<string> {
+    return invoke<string>('set_network_config', { ip, mask, gateway });
+  }
+
+  async restoreNetworkDhcp(): Promise<string> {
+    return invoke<string>('restore_network_dhcp');
+  }
+
+  async addNetworkPrinter(ip: string, name: string): Promise<string> {
+    return invoke<string>('add_network_printer', { ip, name });
   }
 }
