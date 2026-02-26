@@ -83,7 +83,10 @@
           [bluetoothLoaded]="bluetoothLoaded()"
           [loadingBluetooth]="loadingBluetooth()"
           [serialPorts]="serialPorts()"
-          (loadBluetoothClick)="loadBluetooth()" />
+          [usbPrintingFor]="usbPrintingFor()"
+          [usbPrintResult]="usbPrintResult()"
+          (loadBluetoothClick)="loadBluetooth()"
+          (printUsbTestClick)="printTestUsb($event.portName, $event.size)" />
       }
 
       <!-- ═══════════════════════════════════════════════════════════════ -->

@@ -4,6 +4,8 @@ import { CardComponent } from '../../card.component';
 import { BtnComponent } from '../../btn.component';
 import { PrinterInfo, BluetoothDevice, SerialPort } from '../../tauri.service';
 
+type UsbPrintSize = 'thermal_50mm' | 'thermal_80mm';
+
 @Component({
   selector: 'app-dashboard-tab',
   standalone: true,
@@ -23,5 +25,15 @@ export class DashboardTabComponent {
   readonly loadingBluetooth = input.required<boolean>();
   readonly serialPorts = input.required<SerialPort[]>();
 
+  /** Clave `portName::size` de la impresora USB en curso, o `null` si no hay trabajo activo. */
+  readonly usbPrintingFor = input.required<string | null>();
+  /** Resultado del último trabajo USB: `null` si no hay ninguno todavía. */
+  readonly usbPrintResult = input.required<{ ok: boolean; message: string } | null>();
+
   readonly loadBluetoothClick = output<void>();
+  readonly printUsbTestClick = output<{ portName: string; size: UsbPrintSize }>();
+
+  isUsbPrinting(portName: string, size: UsbPrintSize): boolean {
+    return this.usbPrintingFor() === `${portName}::${size}`;
+  }
 }

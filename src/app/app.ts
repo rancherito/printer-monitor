@@ -67,6 +67,10 @@ export class App implements OnInit, OnDestroy {
   protected readonly bluetoothError = signal<string | null>(null);
   protected readonly bluetoothLoaded = signal(false);
 
+  // Impresión USB directa (ESC/POS sin CUPS)
+  protected readonly usbPrintingFor = signal<string | null>(null);
+  protected readonly usbPrintResult = signal<{ ok: boolean; message: string } | null>(null);
+
   // Renombrar impresora
   protected readonly renamingPrinter = signal<string | null>(null);
   protected readonly renameValue = signal('');
@@ -152,6 +156,21 @@ export class App implements OnInit, OnDestroy {
       this.printResult.set({ ok: false, message: String(e) });
     } finally {
       this.printingFor.set(null);
+    }
+  }
+
+  /** Imprime ESC/POS directamente al puerto USB/serie (sin CUPS). */
+  async printTestUsb(portName: string, size: 'thermal_50mm' | 'thermal_80mm'): Promise<void> {
+    const key = `${portName}::${size}`;
+    this.usbPrintingFor.set(key);
+    this.usbPrintResult.set(null);
+    try {
+      const result = await this.tauri.printTestUsb(portName, size);
+      this.usbPrintResult.set({ ok: true, message: result });
+    } catch (e) {
+      this.usbPrintResult.set({ ok: false, message: String(e) });
+    } finally {
+      this.usbPrintingFor.set(null);
     }
   }
 

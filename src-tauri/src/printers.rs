@@ -591,6 +591,129 @@ pub fn print_test(printer_name: String, size: String) -> Result<String, String> 
     }
 }
 
+// ─── ESC/POS directo a USB ───────────────────────────────────────────────────
+
+/// Envía una página de prueba ESC/POS directamente al dispositivo serie/USB indicado
+/// **sin** pasar por CUPS. Apto para impresoras térmicas conectadas por USB que aparecen
+/// como puerto serie (`/dev/cu.usbmodem*`, `ttyUSB*`, `COM*`).
+///
+/// El tamaño determina la anchura del ticket:
+/// - `thermal_50mm` → 32 caracteres por línea (rollo 58 mm, área imprimible ≈ 48 mm)
+/// - `thermal_80mm` → 48 caracteres por línea (rollo 80 mm, área imprimible ≈ 72 mm)
+#[tauri::command]
+pub fn print_test_usb(port_name: String, size: String) -> Result<String, String> {
+    let (chars_per_line, label) = match size.as_str() {
+        "thermal_80mm" => (48usize, "Termica 80mm"),
+        _ => (32usize, "Termica 50mm"),
+    };
+
+    let data = build_escpos_test(&port_name, chars_per_line, label);
+    write_to_serial_port(&port_name, &data)
+}
+
+/// Construye el payload ESC/POS de la página de prueba.
+fn build_escpos_test(port_name: &str, chars_per_line: usize, label: &str) -> Vec<u8> {
+    let mut d: Vec<u8> = Vec::new();
+
+    // ESC @ — Inicializar impresora
+    d.extend_from_slice(&[0x1B, 0x40]);
+
+    // --- Título centrado, doble ancho + doble alto ---
+    // ESC a 1 — Alineación centrada
+    d.extend_from_slice(&[0x1B, 0x61, 0x01]);
+    // ESC ! 0x30 — Doble ancho + doble alto
+    d.extend_from_slice(&[0x1B, 0x21, 0x30]);
+    d.extend_from_slice(b"PRUEBA OK\n");
+    // ESC ! 0x00 — Fuente normal
+    d.extend_from_slice(&[0x1B, 0x21, 0x00]);
+    d.extend_from_slice(format!("{}\n", label).as_bytes());
+
+    // --- Cuerpo alineado a la izquierda ---
+    // ESC a 0 — Alineación izquierda
+    d.extend_from_slice(&[0x1B, 0x61, 0x00]);
+
+    let sep = "-".repeat(chars_per_line);
+    d.extend_from_slice(format!("{}\n", sep).as_bytes());
+
+    // Nombre corto del puerto (sin ruta completa)
+    let port_short = port_name.rsplit('/').next().unwrap_or(port_name);
+    d.extend_from_slice(format!("Puerto: {}\n", port_short).as_bytes());
+    d.extend_from_slice(b"Printer Monitor\n");
+    d.extend_from_slice(
+        format!(
+            "Fecha: {}\n",
+            chrono::Local::now().format("%d/%m/%Y %H:%M")
+        )
+        .as_bytes(),
+    );
+    d.extend_from_slice(b"Si ves esto, funciona!\n");
+    d.extend_from_slice(format!("{}\n", sep).as_bytes());
+
+    // ESC d 5 — Avanzar 5 líneas
+    d.extend_from_slice(&[0x1B, 0x64, 0x05]);
+
+    // GS V A 0 — Corte total
+    d.extend_from_slice(&[0x1D, 0x56, 0x41, 0x00]);
+
+    d
+}
+
+/// Abre el dispositivo serie y escribe los bytes.
+///
+/// macOS/Linux: abre el archivo de dispositivo directamente y (opcionalmente)
+/// configura el puerto con `stty` en modo raw antes de escribir.
+/// Windows: usa la ruta `\\.\COMx` para puertos con número > 9.
+fn write_to_serial_port(port_name: &str, data: &[u8]) -> Result<String, String> {
+    use std::io::Write;
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        use std::fs::OpenOptions;
+        use std::process::Command;
+
+        // Intentar configurar el puerto en modo raw.
+        // Si falla (p.ej. dispositivo USB-CDC que no necesita baud rate), se ignora.
+        let stty_flag = if cfg!(target_os = "macos") { "-f" } else { "-F" };
+        let _ = Command::new("stty")
+            .args([stty_flag, port_name, "raw", "9600", "-echo", "cs8", "-cstopb", "-parenb"])
+            .output();
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .open(port_name)
+            .map_err(|e| format!("No se pudo abrir {}: {}", port_name, e))?;
+
+        file.write_all(data)
+            .map_err(|e| format!("Error al enviar datos al puerto: {}", e))?;
+
+        let short = port_name.rsplit('/').next().unwrap_or(port_name);
+        return Ok(format!("Prueba enviada a {}", short));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // COM1..COM9 → "COM1"; COM10+ necesitan prefijo "\\\\.\\COM10"
+        let path = if port_name.starts_with("COM") {
+            format!("\\\\.\\{}", port_name)
+        } else {
+            port_name.to_string()
+        };
+
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .map_err(|e| format!("No se pudo abrir {}: {}", port_name, e))?;
+
+        file.write_all(data)
+            .map_err(|e| format!("Error al enviar datos al puerto: {}", e))?;
+
+        return Ok(format!("Prueba enviada a {}", port_name));
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    Err("Sistema operativo no soportado".to_string())
+}
+
 // ─── Helpers PDF ─────────────────────────────────────────────────────────────
 
 fn build_test_pdf(width: u32, height: u32, title: &str, lines: &[String]) -> Vec<u8> {

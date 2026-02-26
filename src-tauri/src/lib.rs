@@ -93,6 +93,7 @@ pub fn run() {
             printers::get_printers,
             printers::rename_printer,
             printers::print_test,
+            printers::print_test_usb,
             printers::add_network_printer,
             serial::get_serial_ports,
             settings::get_settings,

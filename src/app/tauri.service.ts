@@ -76,6 +76,14 @@ export class TauriService {
     return invoke<string>('print_test', { printerName, size });
   }
 
+  /**
+   * Envía una página de prueba ESC/POS directamente al puerto USB/serie indicado,
+   * sin pasar por CUPS. Usar para impresoras térmicas no registradas en el sistema.
+   */
+  async printTestUsb(portName: string, size: 'thermal_50mm' | 'thermal_80mm'): Promise<string> {
+    return invoke<string>('print_test_usb', { portName, size });
+  }
+
   async getAutostartEnabled(): Promise<boolean> {
     return invoke<boolean>('get_autostart_enabled');
   }

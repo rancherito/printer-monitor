@@ -123,6 +123,17 @@
         <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span> Tiempo real
       </span>
     </h2>
+
+    @if (usbPrintResult()) {
+      <div class="flex items-start gap-2 p-3 mb-3 rounded-lg text-xs border"
+           [class.bg-green-50]="usbPrintResult()!.ok" [class.border-green-200]="usbPrintResult()!.ok" [class.text-green-700]="usbPrintResult()!.ok"
+           [class.bg-red-50]="!usbPrintResult()!.ok" [class.border-red-200]="!usbPrintResult()!.ok" [class.text-red-600]="!usbPrintResult()!.ok"
+           role="status">
+        <ng-icon [name]="usbPrintResult()!.ok ? 'matCheckCircle' : 'matCancel'" size="14" class="shrink-0 mt-px"></ng-icon>
+        <span>{{ usbPrintResult()!.message }}</span>
+      </div>
+    }
+
     @if (serialPorts().length === 0 && !loading()) {
       <app-card padding="md">
         <p class="text-sm text-slate-400">Sin dispositivos USB/COM conectados.</p>
@@ -131,17 +142,42 @@
       <div class="flex flex-col gap-1.5">
         @for (p of serialPorts(); track p.port_name) {
           <app-card padding="sm">
-            <div class="flex items-center justify-between px-1">
-              <div class="flex items-center gap-2">
-                <ng-icon name="matUsb" size="16" class="text-slate-400"></ng-icon>
-                <span class="font-mono text-sm font-medium text-slate-900">{{ p.port_name }}</span>
+            <div class="flex items-center justify-between gap-3 px-1">
+              <div class="flex items-center gap-2 min-w-0">
+                <ng-icon name="matUsb" size="16" class="text-slate-400 shrink-0"></ng-icon>
+                <span class="font-mono text-sm font-medium text-slate-900 truncate">{{ p.port_name }}</span>
               </div>
-              <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                    [class.bg-blue-100]="p.device_type === 'USB-Serial'" [class.text-blue-700]="p.device_type === 'USB-Serial'"
-                    [class.bg-violet-100]="p.device_type === 'USB-CDC'" [class.text-violet-700]="p.device_type === 'USB-CDC'"
-                    [class.bg-slate-100]="p.device_type === 'COM'" [class.text-slate-600]="p.device_type === 'COM'">
-                {{ p.device_type }}
-              </span>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <!-- Botones de prueba ESC/POS directo (sin CUPS) -->
+                <button appBtn variant="ghost" size="sm"
+                        [disabled]="isUsbPrinting(p.port_name, 'thermal_50mm') || isUsbPrinting(p.port_name, 'thermal_80mm')"
+                        [attr.aria-label]="'Prueba 50mm en ' + p.port_name"
+                        (click)="printUsbTestClick.emit({ portName: p.port_name, size: 'thermal_50mm' })">
+                  @if (isUsbPrinting(p.port_name, 'thermal_50mm')) {
+                    <span class="w-3 h-3 border-2 border-current border-r-transparent rounded-full animate-spin" aria-hidden="true"></span>
+                  } @else {
+                    <ng-icon name="matPrint" size="13"></ng-icon>
+                  }
+                  50mm
+                </button>
+                <button appBtn variant="ghost" size="sm"
+                        [disabled]="isUsbPrinting(p.port_name, 'thermal_50mm') || isUsbPrinting(p.port_name, 'thermal_80mm')"
+                        [attr.aria-label]="'Prueba 80mm en ' + p.port_name"
+                        (click)="printUsbTestClick.emit({ portName: p.port_name, size: 'thermal_80mm' })">
+                  @if (isUsbPrinting(p.port_name, 'thermal_80mm')) {
+                    <span class="w-3 h-3 border-2 border-current border-r-transparent rounded-full animate-spin" aria-hidden="true"></span>
+                  } @else {
+                    <ng-icon name="matPrint" size="13"></ng-icon>
+                  }
+                  80mm
+                </button>
+                <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                      [class.bg-blue-100]="p.device_type === 'USB-Serial'" [class.text-blue-700]="p.device_type === 'USB-Serial'"
+                      [class.bg-violet-100]="p.device_type === 'USB-CDC'" [class.text-violet-700]="p.device_type === 'USB-CDC'"
+                      [class.bg-slate-100]="p.device_type === 'COM'" [class.text-slate-600]="p.device_type === 'COM'">
+                  {{ p.device_type }}
+                </span>
+              </div>
             </div>
           </app-card>
         }
