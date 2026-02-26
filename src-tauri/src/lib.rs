@@ -899,14 +899,71 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
+        // Intercepta el cierre de ventana: oculta en lugar de destruir.
+        // El proceso sigue vivo en segundo plano (bandeja / barra de menú).
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
                         .build(),
-                )?;
+                )?
             }
+
+            // ── Icono en bandeja (Windows) / barra de menú (macOS) ───────────
+            {
+                use tauri::menu::{MenuBuilder, MenuItemBuilder};
+                use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+                let show_item = MenuItemBuilder::with_id("show", "Abrir").build(app)?;
+                let quit_item = MenuItemBuilder::with_id("quit", "Salir").build(app)?;
+                let menu = MenuBuilder::new(app)
+                    .item(&show_item)
+                    .item(&quit_item)
+                    .build()?;
+
+                TrayIconBuilder::new()
+                    .icon(app.default_window_icon().unwrap().clone())
+                    .tooltip("Printer Monitor")
+                    .menu(&menu)
+                    // Clic izquierdo muestra la ventana directamente (no abre el menú)
+                    .menu_on_left_click(false)
+                    .on_menu_event(|app_h, event| match event.id().as_ref() {
+                        "show" => {
+                            if let Some(w) = app_h.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.unminimize();
+                                let _ = w.set_focus();
+                            }
+                        }
+                        "quit" => app_h.exit(0),
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        // Clic izquierdo sobre el icono → mostrar / enfocar ventana
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            let app_h = tray.app_handle();
+                            if let Some(w) = app_h.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.unminimize();
+                                let _ = w.set_focus();
+                            }
+                        }
+                    })
+                    .build(app)?;
+            }
+
             start_printer_watcher(app.handle().clone());
             Ok(())
         })
