@@ -130,20 +130,20 @@
       </app-card>
     } @else {
       <ul class="flex flex-col gap-2.5">
-        @for (printer of printers(); track printer.name) {
+        @for (printer of printers(); track printer.queue_name) {
           <li>
             <app-card padding="md" class="flex flex-col gap-3">
               <div class="flex items-center justify-between gap-3">
                 <div class="flex items-center gap-2 flex-wrap min-w-0">
-                  @if (renamingPrinter() === printer.name) {
+                  @if (renamingPrinter() === printer.queue_name) {
                     <input class="h-7 px-2 rounded-md border border-blue-300 text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 w-52"
                            type="text" [value]="renameValue()"
                            (input)="renameValueChange.emit($any($event.target).value)"
                            (keydown.enter)="confirmRenameClick.emit(printer)"
                            (keydown.escape)="cancelRenameClick.emit()"
                            aria-label="Nuevo nombre" autofocus />
-                    <button appBtn variant="primary" size="sm" (click)="confirmRenameClick.emit(printer)" [disabled]="renamingFor() === printer.name">
-                      @if (renamingFor() === printer.name) {
+                    <button appBtn variant="primary" size="sm" (click)="confirmRenameClick.emit(printer)" [disabled]="renamingFor() === printer.queue_name">
+                      @if (renamingFor() === printer.queue_name) {
                         <span class="w-3 h-3 border-2 border-white border-r-transparent rounded-full animate-spin"></span>
                       } @else {
                         <ng-icon name="matCheck" size="14"></ng-icon>

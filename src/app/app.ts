@@ -141,11 +141,12 @@ export class App implements OnInit, OnDestroy {
   }
 
   async printTest(printer: PrinterInfo, size: PrintSize): Promise<void> {
-    const key = `${printer.name}::${size}`;
+    const key = `${printer.queue_name}::${size}`;
     this.printingFor.set(key);
     this.printResult.set(null);
     try {
-      const result = await this.tauri.printTest(printer.name, size);
+      // queue_name es el nombre de cola CUPS requerido por `lp -d`
+      const result = await this.tauri.printTest(printer.queue_name, size);
       this.printResult.set({ ok: true, message: result });
     } catch (e) {
       this.printResult.set({ ok: false, message: String(e) });
@@ -155,7 +156,7 @@ export class App implements OnInit, OnDestroy {
   }
 
   isPrinting(printer: PrinterInfo, size: PrintSize): boolean {
-    return this.printingFor() === `${printer.name}::${size}`;
+    return this.printingFor() === `${printer.queue_name}::${size}`;
   }
 
   async toggleAutostart(): Promise<void> {
@@ -222,7 +223,9 @@ export class App implements OnInit, OnDestroy {
   }
 
   startRename(printer: PrinterInfo): void {
-    this.renamingPrinter.set(printer.name);
+    // Usamos queue_name como identificador único del ítem en la UI
+    this.renamingPrinter.set(printer.queue_name);
+    // Mostramos el nombre visible actual para que el usuario lo edite
     this.renameValue.set(printer.name);
     this.renameResult.set(null);
   }
@@ -238,9 +241,10 @@ export class App implements OnInit, OnDestroy {
       this.cancelRename();
       return;
     }
-    this.renamingFor.set(printer.name);
+    // queue_name es el identificador interno de CUPS que requiere lpadmin
+    this.renamingFor.set(printer.queue_name);
     try {
-      const msg = await this.tauri.renamePrinter(printer.name, newName);
+      const msg = await this.tauri.renamePrinter(printer.queue_name, newName);
       this.renameResult.set({ ok: true, message: msg, printerName: printer.name });
       this.renamingPrinter.set(null);
       await this.refresh();

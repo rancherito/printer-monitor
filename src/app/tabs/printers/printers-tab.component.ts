@@ -97,6 +97,6 @@ export class PrintersTabComponent {
   ];
 
   isPrinting(printer: PrinterInfo, size: PrintSize): boolean {
-    return this.printingFor() === `${printer.name}::${size}`;
+    return this.printingFor() === `${printer.queue_name}::${size}`;
   }
 }

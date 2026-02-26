@@ -2,7 +2,15 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct PrinterInfo {
+    /// Nombre visible para el usuario (descripción/display name del SO).
+    /// En macOS/Linux: valor de `printer-info` / "Description:" de CUPS.
+    /// En Windows: nombre de la impresora (que ya es el display name).
     pub name: String,
+    /// Nombre interno de la cola CUPS (`lpadmin -p <queue_name>`).
+    /// Es el identificador que requieren comandos como `lp -d` o `lpadmin -p`.
+    /// En Windows coincide con `name`. En macOS puede diferir si el usuario
+    /// renombró la impresora en Preferencias del Sistema sin cambiar la cola.
+    pub queue_name: String,
     pub is_default: bool,
     pub status: String,
 }
@@ -38,20 +46,35 @@ pub fn get_printers() -> Vec<PrinterInfo> {
             })
             .unwrap_or_default();
 
-        if let Ok(output) = Command::new("lpstat").args(["-p"]).output() {
+        // Usamos `lpstat -l -p` (formato largo) para obtener tanto el nombre interno
+        // de la cola CUPS (queue_name) como el nombre visible del SO (display name /
+        // "Description:"). macOS muestra el display name en Preferencias del Sistema
+        // → Impresoras y escáneres; los comandos lp/lpadmin requieren el queue_name.
+        // Formato de salida (varía por locale del SO):
+        //   EN: "printer QUEUE_NAME is idle. ...\n\tDescription: Display Name\n\t..."
+        //   ES: "la impresora QUEUE_NAME está inactiva.\n\tDescripción: Nombre visible\n\t..."
+        if let Ok(output) = Command::new("lpstat").args(["-l", "-p"]).output() {
             let text = String::from_utf8_lossy(&output.stdout);
+
+            struct Entry {
+                queue_name: String,
+                description: Option<String>,
+                status: String,
+                is_default: bool,
+            }
+
+            let mut entries: Vec<Entry> = Vec::new();
+            let mut current: Option<Entry> = None;
+
             for line in text.lines() {
-                let line = line.trim();
-                if line.is_empty() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
                     continue;
                 }
-                let tokens: Vec<&str> = line.split_whitespace().collect();
+                let tokens: Vec<&str> = trimmed.split_whitespace().collect();
 
-                // Buscamos el token "printer" o "impresora" y tomamos el siguiente.
-                // Esto cubre todos los locales conocidos:
-                //   "printer NAME ..."            (EN)
-                //   "impresora NAME ..."           (ES sin artículo)
-                //   "la impresora NAME ..."        (ES con artículo — salida real confirmada)
+                // ¿Línea de cabecera de impresora?
+                // Cubre: "printer NAME ..." / "impresora NAME ..." / "la impresora NAME ..."
                 let name_idx = tokens
                     .iter()
                     .position(|t| {
@@ -60,33 +83,72 @@ pub fn get_printers() -> Vec<PrinterInfo> {
                     })
                     .map(|i| i + 1);
 
-                let name = match name_idx.and_then(|i| tokens.get(i)) {
-                    Some(n) => n.to_string(),
-                    None => continue,
-                };
+                if let Some(idx) = name_idx {
+                    // Guardar la entrada anterior antes de comenzar una nueva
+                    if let Some(entry) = current.take() {
+                        entries.push(entry);
+                    }
+                    if let Some(&queue) = tokens.get(idx) {
+                        let line_lower = trimmed.to_lowercase();
+                        let status = if line_lower.contains("idle")
+                            || line_lower.contains("inactiva")
+                            || line_lower.contains("en espera")
+                            || line_lower.contains("habilitada")
+                        {
+                            "Disponible".to_string()
+                        } else if line_lower.contains("disabled")
+                            || line_lower.contains("deshabilitada")
+                        {
+                            "Deshabilitada".to_string()
+                        } else if line_lower.contains("printing")
+                            || line_lower.contains("imprimiendo")
+                        {
+                            "Imprimiendo".to_string()
+                        } else {
+                            "Disponible".to_string()
+                        };
+                        let is_default = queue == default_printer;
+                        current = Some(Entry {
+                            queue_name: queue.to_string(),
+                            description: None,
+                            status,
+                            is_default,
+                        });
+                    }
+                } else if let Some(ref mut entry) = current {
+                    // Línea de detalle (indentada). Buscamos la de descripción/display name.
+                    // La clave varía por locale pero siempre tiene "descri" (EN/ES/IT/FR/PT)
+                    // o "schrij" (NL). Ej: "Description:", "Descripción:", "Descrizione:"
+                    if entry.description.is_none() {
+                        if let Some(colon_pos) = trimmed.find(':') {
+                            let key = trimmed[..colon_pos].trim().to_lowercase();
+                            if key.contains("descri") || key.contains("schrij") {
+                                let val = trimmed[colon_pos + 1..].trim().to_string();
+                                if !val.is_empty() {
+                                    entry.description = Some(val);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Guardar la última entrada
+            if let Some(entry) = current {
+                entries.push(entry);
+            }
 
-                let line_lower = line.to_lowercase();
-                let status = if line_lower.contains("idle")
-                    || line_lower.contains("inactiva")
-                    || line_lower.contains("en espera")
-                    || line_lower.contains("habilitada")
-                {
-                    "Disponible".to_string()
-                } else if line_lower.contains("disabled")
-                    || line_lower.contains("deshabilitada")
-                {
-                    "Deshabilitada".to_string()
-                } else if line_lower.contains("printing")
-                    || line_lower.contains("imprimiendo")
-                {
-                    "Imprimiendo".to_string()
-                } else {
-                    // Estado desconocido → asumir disponible
-                    "Disponible".to_string()
-                };
-
-                let is_default = name == default_printer;
-                printers.push(PrinterInfo { name, is_default, status });
+            for entry in entries {
+                // Si CUPS no tiene descripción configurada, mostramos el queue_name
+                let name = entry
+                    .description
+                    .filter(|d| !d.is_empty())
+                    .unwrap_or_else(|| entry.queue_name.clone());
+                printers.push(PrinterInfo {
+                    name,
+                    queue_name: entry.queue_name,
+                    is_default: entry.is_default,
+                    status: entry.status,
+                });
             }
         }
     }
@@ -134,7 +196,9 @@ pub fn get_printers() -> Vec<PrinterInfo> {
                         } else {
                             "Disponible".to_string()
                         };
-                        printers.push(PrinterInfo { name, is_default, status });
+                        // En Windows el nombre de impresora ES el nombre visible;
+                        // queue_name y name son idénticos.
+                        printers.push(PrinterInfo { name: name.clone(), queue_name: name, is_default, status });
                         found = true;
                     }
                 }
@@ -163,7 +227,7 @@ pub fn get_printers() -> Vec<PrinterInfo> {
                             "5" => "Calentando".to_string(),
                             _ => "Disponible".to_string(),
                         };
-                        printers.push(PrinterInfo { name, is_default, status });
+                        printers.push(PrinterInfo { name: name.clone(), queue_name: name, is_default, status });
                     }
                 }
             }

@@ -2,7 +2,10 @@ import { Injectable } from '@angular/core';
 import { invoke } from '@tauri-apps/api/core';
 
 export interface PrinterInfo {
+  /** Nombre visible para el usuario (display name del SO). */
   name: string;
+  /** Nombre interno de la cola CUPS / Windows printer name. Usar para operaciones de backend (print, rename). */
+  queue_name: string;
   is_default: boolean;
   status: string;
 }
