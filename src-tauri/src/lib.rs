@@ -5,6 +5,18 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_autostart::ManagerExt;
 
+/// Crea un `Command` sin ventana de consola en Windows (flag CREATE_NO_WINDOW).
+/// Evita que aparezcan ventanas CMD al lanzar subprocesos desde la app.
+/// En otros SO es equivalente a `std::process::Command::new`.
+#[cfg(target_os = "windows")]
+fn hidden_cmd(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut cmd = std::process::Command::new(program);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct PrinterInfo {
     pub name: String,
@@ -101,9 +113,7 @@ fn get_printers() -> Vec<PrinterInfo> {
 
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-
-        if let Ok(output) = Command::new("wmic")
+        if let Ok(output) = hidden_cmd("wmic")
             .args(["printer", "get", "Name,Default,PrinterStatus", "/format:csv"])
             .output()
         {
@@ -204,8 +214,7 @@ fn list_serial_ports() -> Vec<SerialPort> {
 
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-        if let Ok(output) = Command::new("wmic")
+        if let Ok(output) = hidden_cmd("wmic")
             .args(["path", "Win32_SerialPort", "get", "DeviceID,Description", "/format:csv"])
             .output()
         {
@@ -417,8 +426,8 @@ fn rename_printer(printer_name: String, new_name: String) -> Result<String, Stri
             printer_name.replace('\'', "''"),
             name.replace('\'', "''")
         );
-        Command::new("powershell")
-            .args(["-NoProfile", "-Command", &script])
+        hidden_cmd("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
             .output()
             .map_err(|e| format!("No se pudo ejecutar PowerShell: {e}"))
             .and_then(|o| {
@@ -495,7 +504,7 @@ fn scan_network() -> Vec<NetworkDevice> {
                 .map(|o| o.status.success())
                 .unwrap_or(false);
             #[cfg(target_os = "windows")]
-            let reachable = Command::new("ping")
+            let reachable = hidden_cmd("ping")
                 .args(["-n", "1", "-w", "500", &ip])
                 .output()
                 .map(|o| o.status.success())
@@ -596,9 +605,12 @@ fn get_bluetooth_devices() -> Vec<BluetoothDevice> {
 
     #[cfg(target_os = "windows")]
     {
-        if let Ok(output) = Command::new("powershell")
+        if let Ok(output) = hidden_cmd("powershell")
             .args([
                 "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
                 "-Command",
                 "Get-PnpDevice -Class Bluetooth | Select-Object FriendlyName,InstanceId,Status | ConvertTo-Csv -NoTypeInformation",
             ])
@@ -726,7 +738,7 @@ fn print_test(printer_name: String, size: String) -> Result<String, String> {
 
     #[cfg(target_os = "windows")]
     {
-        let output = Command::new("cmd")
+        let output = hidden_cmd("cmd")
             .args(["/C", "print", &format!("/D:{}", printer_name), tmp_path.to_str().unwrap_or("")])
             .output()
             .map_err(|e| format!("Error al ejecutar print: {e}"))?;
