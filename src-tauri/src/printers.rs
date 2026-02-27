@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -1591,4 +1592,10 @@ fn trim_white_rows_bottom(png_bytes: &[u8]) -> Result<Vec<u8>, String> {
         .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
         .map_err(|e| format!("Error codificando PNG recortado: {e}"))?;
     Ok(out)
+}
+
+
+#[cfg(target_os = "windows")]
+fn print_raw_cups(_queue_name: &str, _data: &[u8]) -> Result<(), String> {
+    Err("Las colas Raw USB usando enrutador del sistema aun no estan soportadas en esta actualizacion de Windows. Enlaza tu termica via Red (TCP/IP).".to_string())
 }

@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 /// Servidor HTTP de impresión de PDF.
 ///
 /// Escucha siempre en `0.0.0.0:8001`.
