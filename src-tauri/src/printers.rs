@@ -1460,149 +1460,108 @@ pub fn print_pdf(pdf_b64: String, printer_name: String, width: String) -> Result
 
 // ─── Helpers internos de conversión PDF ──────────────────────────────────────
 
-/// Renderiza un PDF a PNG usando sips (nativo macOS) con supersampling 4x.
-/// sips renderiza PDFs a 72 DPI. Para obtener buena calidad pedimos 4× el ancho
-/// objetivo y luego Rust hace el downsampling con Lanczos3 (anti-aliasing real).
-fn render_pdf_to_png(pdf_bytes: &[u8], target_width_px: u32) -> Result<Vec<u8>, String> {
-    use std::process::Command;
-
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    let pdf_path = format!("/private/tmp/pm_{ts}.pdf");
-    let png_path = format!("/private/tmp/pm_{ts}.png");
-
-    std::fs::write(&pdf_path, pdf_bytes)
-        .map_err(|e| format!("Error guardando PDF temporal: {e}"))?;
-
-    // Renderizar a 4× el ancho objetivo para calidad (luego downsampling)
-    let super_width = target_width_px * 4;
-    let out = Command::new("sips")
-        .args([
-            "-s", "format", "png",
-            "--resampleWidth", &super_width.to_string(),
-            &pdf_path,
-            "--out", &png_path,
-        ])
-        .output();
-    let _ = std::fs::remove_file(&pdf_path);
-    let out = out.map_err(|e| format!("Error ejecutando sips: {e}"))?;
-
-    if !out.status.success() {
-        let _ = std::fs::remove_file(&png_path);
-        return Err(format!(
-            "sips error: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+fn get_pdfium_lib_path() -> Result<std::path::PathBuf, String> {
+    use std::env;
+    let mut exe_path = env::current_exe().map_err(|e| e.to_string())?;
+    let mut use_cargo_dir = false;
+    
+    if cfg!(target_os = "macos") && exe_path.to_string_lossy().contains("Contents/MacOS") {
+        exe_path.pop(); // MacOS
+        exe_path.pop(); // Contents
+        exe_path.push("Resources");
+    } else if cfg!(target_os = "windows") && !exe_path.to_string_lossy().contains("target") {
+        exe_path.pop(); // En Windows (producción) la librería está junto al ejecutable
+    } else {
+        use_cargo_dir = true;
     }
 
-    // Leer PNG — sips puede generar página única o múltiples (base-1.png, base-2.png…)
-    let super_bytes = if std::path::Path::new(&png_path).exists() {
-        let b = std::fs::read(&png_path).map_err(|e| format!("Error leyendo PNG: {e}"))?;
-        let _ = std::fs::remove_file(&png_path);
-        b
+    let mut final_path = if use_cargo_dir {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
     } else {
-        let base = png_path.trim_end_matches(".png");
-        let mut pages = Vec::new();
-        let mut i = 1usize;
-        loop {
-            let p = format!("{base}-{i}.png");
-            match std::fs::read(&p) {
-                Ok(b) => { let _ = std::fs::remove_file(&p); pages.push(b); i += 1; }
-                Err(_) => break,
-            }
-        }
-        if pages.is_empty() {
-            return Err("sips no generó imágenes".to_string());
-        }
-        stitch_pages_vertical(&pages, super_width)?
+        exe_path.clone()
     };
 
-    // Devolvemos directamente la imagen en alta resolución (4x).
-    // encode_image_escstar se encargará de escalarla en el momento de crear
-    // el buffer blanco/negro de dithering para no perder detalles por escalados dobles.
-    Ok(super_bytes)
+    final_path.push("libs");
+
+    #[cfg(target_os = "macos")]
+    #[cfg(target_arch = "aarch64")]
+    final_path.push("mac-arm64/libpdfium.dylib");
+
+    #[cfg(target_os = "macos")]
+    #[cfg(target_arch = "x86_64")]
+    final_path.push("mac-x64/libpdfium.dylib");
+
+    #[cfg(target_os = "windows")]
+    final_path.push("win-x64/pdfium.dll");
+
+    Ok(final_path)
 }
 
-/// Lee páginas generadas por ImageMagick para un PDF multi-página.
-/// ImageMagick nombra las páginas: base-0.png, base-1.png, …
-fn collect_png_pages_magick(base_png: &str) -> Vec<Vec<u8>> {
-    let base = base_png.trim_end_matches(".png");
-    let mut pages = Vec::new();
-    let mut i = 0usize;
-    loop {
-        let path = format!("{base}-{i}.png");
-        match std::fs::read(&path) {
-            Ok(bytes) => {
-                let _ = std::fs::remove_file(&path);
-                pages.push(bytes);
-                i += 1;
-            }
-            Err(_) => break,
-        }
-    }
-    pages
-}
-
-/// Lee páginas generadas por sips para un PDF multi-página.
-/// sips nombra las páginas: base-1.png, base-2.png, …
-fn collect_png_pages(base_png: &str) -> Vec<Vec<u8>> {
-    let base = base_png.trim_end_matches(".png");
-    let mut pages = Vec::new();
-    let mut i = 1usize;
-    loop {
-        let path = format!("{base}-{i}.png");
-        match std::fs::read(&path) {
-            Ok(bytes) => {
-                let _ = std::fs::remove_file(&path);
-                pages.push(bytes);
-                i += 1;
-            }
-            Err(_) => break,
-        }
-    }
-    pages
-}
-
-/// Apila una lista de PNGs verticalmente en una única imagen.
-fn stitch_pages_vertical(pages: &[Vec<u8>], target_width: u32) -> Result<Vec<u8>, String> {
+fn render_pdf_to_png(pdf_bytes: &[u8], target_width_px: u32) -> Result<Vec<u8>, String> {
+    use pdfium_render::prelude::*;
     use image::{DynamicImage, RgbImage};
-
-    let mut decoded: Vec<DynamicImage> = pages
-        .iter()
-        .map(|bytes| image::load_from_memory(bytes).map_err(|e| format!("Error cargando página: {e}")))
-        .collect::<Result<_, _>>()?;
-
-    // Normalizar ancho
-    for img in &mut decoded {
-        if img.width() != target_width {
+    
+    let lib_path = get_pdfium_lib_path()?;
+    let bind = Pdfium::bind_to_library(lib_path.to_str().unwrap_or_default())
+        .or_else(|_| Pdfium::bind_to_system_library())
+        .map_err(|e| format!("No se pudo cargar libpdfium ({}): {:?}", lib_path.display(), e))?;
+        
+    let pdfium = Pdfium::new(bind);
+    let document = pdfium.load_pdf_from_byte_slice(pdf_bytes, None)
+        .map_err(|e| format!("Error cargando PDF: {:?}", e))?;
+        
+    let super_width = target_width_px * 4;
+    let mut rendered_pages: Vec<DynamicImage> = Vec::new();
+    
+    for (index, page) in document.pages().iter().enumerate() {
+        let width_pt = page.width().value;
+        let scale = super_width as f32 / width_pt;
+        
+        let config = PdfRenderConfig::new()
+            .scale_page_by_factor(scale)
+            .render_annotations(true)
+            .set_clear_color(PdfColor::new(255, 255, 255, 255));
+        
+        let bitmap = page.render_with_config(&config)
+            .map_err(|e| format!("Error renderizando página {}: {:?}", index, e))?;
+            
+        rendered_pages.push(bitmap.as_image());
+    }
+    
+    if rendered_pages.is_empty() {
+        return Err("El PDF no tiene páginas.".to_string());
+    }
+    
+    // Normalizamos el ancho (por si las páginas tienen tamaños diferentes)
+    for img in &mut rendered_pages {
+        if img.width() != super_width {
             *img = img.resize_exact(
-                target_width,
-                (img.height() as f64 * target_width as f64 / img.width().max(1) as f64) as u32,
+                super_width,
+                (img.height() as f64 * super_width as f64 / img.width().max(1) as f64) as u32,
                 image::imageops::FilterType::Lanczos3,
             );
         }
     }
-
-    let total_h: u32 = decoded.iter().map(|i| i.height()).sum();
-    let mut canvas = RgbImage::new(target_width, total_h);
+    
+    let total_h: u32 = rendered_pages.iter().map(|i| i.height()).sum();
+    let mut canvas = RgbImage::new(super_width, total_h);
     for p in canvas.pixels_mut() {
         *p = image::Rgb([255, 255, 255]);
     }
-
+    
     let mut y_off = 0u32;
-    for img in &decoded {
+    for img in &rendered_pages {
         for (x, y, p) in img.to_rgb8().enumerate_pixels() {
             canvas.put_pixel(x, y + y_off, *p);
         }
         y_off += img.height();
     }
-
+    
     let mut out = Vec::new();
     DynamicImage::from(canvas)
         .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
-        .map_err(|e| format!("Error codificando imagen: {e}"))?;
+        .map_err(|e| format!("Error codificando imagen final: {}", e))?;
+        
     Ok(out)
 }
 

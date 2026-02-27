@@ -34,3 +34,4 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 escpos = { version = "0.17.0", features = ["graphics"] }
 base64 = "0.22"
 tiny_http = "0.12"
+pdfium-render = "0.8.37"
