@@ -520,6 +520,35 @@ pub fn add_network_printer(ip: String, name: String) -> Result<String, String> {
 /// Logo de la app embebido en el binario en tiempo de compilación.
 const APP_LOGO: &[u8] = include_bytes!("../icons/icon.png");
 
+// ─── Driver ESC/POS en memoria ───────────────────────────────────────────────
+
+/// Driver que acumula los bytes ESC/POS en un buffer compartido (`Arc<Mutex<Vec<u8>>>`)
+/// en lugar de enviarlos por red o puerto serie. Permite usar el mismo
+/// `escpos::Printer` para construir el payload y luego enviarlo por cualquier
+/// canal (lp -d, socket…).
+struct VecDriver {
+    buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+}
+
+impl VecDriver {
+    /// Devuelve `(driver, shared_buf)`. Después de hacer `drop(printer)` se
+    /// puede leer `shared_buf.lock().unwrap()` para obtener los bytes.
+    fn new() -> (Self, std::sync::Arc<std::sync::Mutex<Vec<u8>>>) {
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        (Self { buf: std::sync::Arc::clone(&buf) }, buf)
+    }
+}
+
+impl escpos::driver::Driver for VecDriver {
+    fn name(&self) -> String { "vec".to_string() }
+    fn write(&self, data: &[u8]) -> escpos::errors::Result<()> {
+        self.buf.lock().unwrap().extend_from_slice(data);
+        Ok(())
+    }
+    fn flush(&self) -> escpos::errors::Result<()> { Ok(()) }
+    fn read(&self, _buf: &mut [u8]) -> escpos::errors::Result<usize> { Ok(0) }
+}
+
 /// Pre-procesa una imagen para impresión térmica 1bpp.
 ///
 /// Pasos:
@@ -613,45 +642,191 @@ fn dither_image_bytes(img_bytes: &[u8], max_width: u32) -> Result<Vec<u8>, Strin
     Ok(png_bytes)
 }
 
+/// Codifica una imagen como comandos **ESC \*** (column format, modo 0: 8-dot single density).
+///
+/// A diferencia de `GS v 0` (raster), este formato es compatible con la gran mayoría
+/// de impresoras térmicas de bajo costo (incluidas las micro-printers chinas).
+/// Aplica dithering Floyd-Steinberg para máxima calidad en 1bpp.
+fn encode_image_escstar(img_bytes: &[u8], max_width_px: u32) -> Result<Vec<u8>, String> {
+    use image::{DynamicImage, GrayImage, RgbImage};
+
+    let img = image::load_from_memory(img_bytes)
+        .map_err(|e| format!("Error al cargar imagen: {e}"))?;
+
+    // Redimensionar preservando proporción
+    let orig_w = img.width().max(1);
+    let orig_h = img.height().max(1);
+    let (target_w, target_h) = if orig_w > max_width_px {
+        let h = ((orig_h as f64 * max_width_px as f64) / orig_w as f64) as u32;
+        (max_width_px, h.max(1))
+    } else {
+        (orig_w, orig_h)
+    };
+    let resized = img.resize_exact(target_w, target_h, image::imageops::FilterType::Lanczos3);
+
+    // Componer sobre fondo blanco (maneja transparencia)
+    let rgba = resized.to_rgba8();
+    let mut rgb_white = RgbImage::new(target_w, target_h);
+    for (x, y, p) in rgba.enumerate_pixels() {
+        let a = p.0[3] as u32;
+        let ia = 255 - a;
+        rgb_white.put_pixel(x, y, image::Rgb([
+            ((p.0[0] as u32 * a + ia * 255) / 255) as u8,
+            ((p.0[1] as u32 * a + ia * 255) / 255) as u8,
+            ((p.0[2] as u32 * a + ia * 255) / 255) as u8,
+        ]));
+    }
+
+    let gray = DynamicImage::from(rgb_white).to_luma8();
+    let w = target_w as usize;
+    let h = target_h as usize;
+
+    // Floyd-Steinberg dithering sobre buffer f32
+    let mut pixels: Vec<f32> = gray.pixels().map(|p| p.0[0] as f32).collect();
+    for y in 0..h {
+        for x in 0..w {
+            let idx = y * w + x;
+            let old = pixels[idx];
+            let new_val = if old < 128.0 { 0.0_f32 } else { 255.0 };
+            let err = old - new_val;
+            pixels[idx] = new_val;
+            if x + 1 < w { pixels[idx + 1] = (pixels[idx + 1] + err * 7.0 / 16.0).clamp(0.0, 255.0); }
+            if y + 1 < h {
+                if x > 0 { pixels[(y+1)*w + x-1] = (pixels[(y+1)*w + x-1] + err * 3.0 / 16.0).clamp(0.0, 255.0); }
+                pixels[(y+1)*w + x] = (pixels[(y+1)*w + x] + err * 5.0 / 16.0).clamp(0.0, 255.0);
+                if x + 1 < w { pixels[(y+1)*w + x+1] = (pixels[(y+1)*w + x+1] + err * 1.0 / 16.0).clamp(0.0, 255.0); }
+            }
+        }
+    }
+
+    let raw: Vec<u8> = pixels.iter().map(|&v| v as u8).collect();
+    let dithered = GrayImage::from_vec(target_w, target_h, raw)
+        .ok_or_else(|| "Error creando buffer dithered".to_string())?;
+
+    // ── Codificar como ESC * (modo 33: 24-dot double density, 203 DPI) ──────
+    let mut out: Vec<u8> = Vec::new();
+
+    // ESC 3 n — fijar avance de línea en unidades de 1/360 pulgada.
+    // Queremos avanzar exactamente 24 dots @ 203 DPI:
+    //   24 dots = 24/203 inch = 0.1182 inch
+    //   0.1182 inch × 360 = 42.56 unidades ≈ 42 unidades
+    out.extend_from_slice(&[0x1B, 0x33, 42]);
+
+    let mut y = 0usize;
+    while y < h {
+        // ESC * 33 nL nH — modo 33: 24-dot double density
+        out.push(0x1B);
+        out.push(0x2A);
+        out.push(33); // 33 = 0x21
+        out.push((w & 0xFF) as u8);
+        out.push((w >> 8) as u8);
+
+        // 3 bytes por columna: MSB superior, medio, LSB inferior
+        for col in 0..w {
+            let mut b1: u8 = 0;
+            let mut b2: u8 = 0;
+            let mut b3: u8 = 0;
+
+            for dot in 0..8usize {
+                if y + dot < h && dithered.get_pixel(col as u32, (y + dot) as u32).0[0] == 0 { b1 |= 1 << (7 - dot); }
+                if y + 8 + dot < h && dithered.get_pixel(col as u32, (y + 8 + dot) as u32).0[0] == 0 { b2 |= 1 << (7 - dot); }
+                if y + 16 + dot < h && dithered.get_pixel(col as u32, (y + 16 + dot) as u32).0[0] == 0 { b3 |= 1 << (7 - dot); }
+            }
+            out.push(b1);
+            out.push(b2);
+            out.push(b3);
+        }
+        out.push(0x0A); // LF — avanza 24 dots
+        y += 24;
+    }
+
+    // ESC 2 — restaurar espaciado de línea por defecto
+    out.extend_from_slice(&[0x1B, 0x32]);
+
+    Ok(out)
+}
+
 /// El logo se pre-procesa con dithering Floyd-Steinberg para preservar todos los
 /// tonos intermedios (el crate escpos usa umbral fijo sin dithering).
 #[tauri::command]
 pub fn print_test(printer_name: String, size: String) -> Result<String, String> {
-    use escpos::{driver::NetworkDriver, printer::Printer, utils::*};
-    use std::time::Duration;
+    match resolve_printer_backend(&printer_name)? {
+        PrinterBackend::Network(ip, port) => {
+            use escpos::{driver::NetworkDriver, printer::Printer, utils::*};
+            use std::time::Duration;
 
-    let print_width_px: u32 = match size.as_str() {
-        "thermal_80mm" => 576,
-        _ => 384,
-    };
+            let print_width_px: u32 = match size.as_str() {
+                "thermal_80mm" => 576,
+                _ => 384,
+            };
+            let logo_dithered = dither_image_bytes(APP_LOGO, print_width_px / 2)?;
 
-    let logo_dithered = dither_image_bytes(APP_LOGO, print_width_px / 2)?;
-    let (ip, port) = resolve_printer_address(&printer_name)?;
+            (|| -> escpos::errors::Result<()> {
+                let driver = NetworkDriver::open(&ip, port, Some(Duration::from_secs(5)))?;
+                let mut p = Printer::new(driver, Protocol::default(), None);
+                p.init()?
+                    .justify(JustifyMode::CENTER)?
+                    .bit_image_from_bytes_option(
+                        &logo_dithered,
+                        BitImageOption::new(Some(print_width_px / 2), None, BitImageSize::Normal)?,
+                    )?
+                    .writeln("")?
+                    .bold(true)?
+                    .writeln("Printer Monitor")?
+                    .bold(false)?
+                    .justify(JustifyMode::LEFT)?
+                    .writeln(&format!("Impresora: {}", printer_name))?
+                    .writeln(&format!("Fecha: {}", chrono::Local::now().format("%d/%m/%Y %H:%M")))?
+                    .writeln("")?
+                    .writeln("Si ves esto, funciona!")?
+                    .feeds(4)?
+                    .print_cut()?;
+                Ok(())
+            })()
+            .map_err(|e| format!("Error de impresión: {e}"))?;
+        }
+        PrinterBackend::CupsRaw(ref queue) => {
+            let print_width_px: u32 = match size.as_str() {
+                "thermal_80mm" => 576,
+                _ => 384,
+            };
+            let label = match size.as_str() {
+                "thermal_80mm" => "Termica 80mm",
+                _ => "Termica 58mm",
+            };
 
-    (|| -> escpos::errors::Result<()> {
-        let driver = NetworkDriver::open(&ip, port, Some(Duration::from_secs(5)))?;
-        let mut p = Printer::new(driver, Protocol::default(), None);
-        p.init()?
-            .justify(JustifyMode::CENTER)?
-            .bit_image_from_bytes_option(
-                &logo_dithered,
-                BitImageOption::new(Some(print_width_px / 2), None, BitImageSize::Normal)?,
-            )?
-            .writeln("")?
-            .bold(true)?
-            .writeln("Printer Monitor")?
-            .bold(false)?
-            .justify(JustifyMode::LEFT)?
-            .writeln(&format!("Impresora: {}", printer_name))?
-            .writeln(&format!("Fecha: {}", chrono::Local::now().format("%d/%m/%Y %H:%M")))?
-            .writeln("")?
-            .writeln("Si ves esto, funciona!")?
-            .feeds(4)?
-            .print_cut()?;
-        Ok(())
-    })()
-    .map_err(|e| format!("Error de impresión: {e}"))?;
+            // Logo vía ESC * (compatible con micro-printers que no soportan GS v 0)
+            let logo_escstar = encode_image_escstar(APP_LOGO, print_width_px / 2)?;
 
+            // Texto vía VecDriver + escpos (funciona correctamente)
+            let (driver, shared_buf) = VecDriver::new();
+            (|| -> escpos::errors::Result<()> {
+                use escpos::{printer::Printer, utils::*};
+                let mut p = Printer::new(driver, Protocol::default(), None);
+                p.init()?
+                    .justify(JustifyMode::CENTER)?
+                    .bold(true)?
+                    .writeln("Printer Monitor")?
+                    .bold(false)?
+                    .justify(JustifyMode::LEFT)?
+                    .writeln(label)?
+                    .writeln(&format!("Cola: {}", queue))?
+                    .writeln(&format!("Fecha: {}", chrono::Local::now().format("%d/%m/%Y %H:%M")))?
+                    .writeln("")?
+                    .writeln("Si ves esto, funciona!")?
+                    .feeds(4)?
+                    .print_cut()?;
+                Ok(())
+            })()
+            .map_err(|e| format!("Error de impresión: {e}"))?;
+
+            // Combinar: imagen ESC * primero, luego texto
+            let mut payload = logo_escstar;
+            payload.push(0x0A);
+            payload.extend_from_slice(&shared_buf.lock().unwrap());
+            print_raw_cups(queue, &payload)?;
+        }
+    }
     Ok(format!("Prueba enviada a \u{ab}{}\u{bb}", printer_name))
 }
 
@@ -734,9 +909,6 @@ pub fn print_image_ticket(
     image_b64: String,
     size: String,
 ) -> Result<String, String> {
-    use escpos::{driver::NetworkDriver, printer::Printer, utils::*};
-    use std::time::Duration;
-
     let print_width_px: u32 = match size.as_str() {
         "thermal_80mm" => 576,
         _ => 384,
@@ -753,51 +925,99 @@ pub fn print_image_ticket(
         None
     };
 
-    let (ip, port) = resolve_printer_address(&printer_name)?;
+    match resolve_printer_backend(&printer_name)? {
+        PrinterBackend::Network(ip, port) => {
+            use escpos::{driver::NetworkDriver, printer::Printer, utils::*};
+            use std::time::Duration;
 
-    (|| -> escpos::errors::Result<()> {
-        let driver = NetworkDriver::open(&ip, port, Some(Duration::from_secs(5)))?;
-        let mut p = Printer::new(driver, Protocol::default(), None);
-        p.init()?;
+            (|| -> escpos::errors::Result<()> {
+                let driver = NetworkDriver::open(&ip, port, Some(Duration::from_secs(5)))?;
+                let mut p = Printer::new(driver, Protocol::default(), None);
+                p.init()?;
 
-        if let Some(ref img) = image_bytes {
-            // Pre-procesar con dithering para evitar el umbral simple del crate
-            let img_dithered = dither_image_bytes(img, print_width_px)
-                .map_err(|e| escpos::errors::PrinterError::Input(e))?;
-            p.justify(JustifyMode::CENTER)?
-                .bit_image_from_bytes_option(
-                    &img_dithered,
-                    BitImageOption::new(Some(print_width_px), None, BitImageSize::Normal)?,
-                )?
-                .writeln("")?
-                .justify(JustifyMode::LEFT)?;
+                if let Some(ref img) = image_bytes {
+                    let img_dithered = dither_image_bytes(img, print_width_px)
+                        .map_err(|e| escpos::errors::PrinterError::Input(e))?;
+                    p.justify(JustifyMode::CENTER)?
+                        .bit_image_from_bytes_option(
+                            &img_dithered,
+                            BitImageOption::new(Some(print_width_px), None, BitImageSize::Normal)?,
+                        )?
+                        .writeln("")?
+                        .justify(JustifyMode::LEFT)?;
+                }
+
+                if !title.is_empty() {
+                    p.justify(JustifyMode::CENTER)?
+                        .bold(true)?
+                        .writeln(&title)?
+                        .bold(false)?
+                        .justify(JustifyMode::LEFT)?;
+                }
+
+                for line in &body_lines {
+                    p.writeln(line)?;
+                }
+
+                p.feeds(4)?.print_cut()?;
+                Ok(())
+            })()
+            .map_err(|e| format!("Error de impresión: {e}"))?;
         }
+        PrinterBackend::CupsRaw(ref queue) => {
+            // Imagen vía ESC * (compatible con micro-printers que no soportan GS v 0)
+            let mut payload: Vec<u8> = Vec::new();
+            payload.extend_from_slice(&[0x1B, 0x40]); // ESC @ — init
 
-        if !title.is_empty() {
-            p.justify(JustifyMode::CENTER)?
-                .bold(true)?
-                .writeln(&title)?
-                .bold(false)?
-                .justify(JustifyMode::LEFT)?;
+            if let Some(ref img) = image_bytes {
+                let img_escstar = encode_image_escstar(img, print_width_px)?;
+                payload.extend_from_slice(&img_escstar);
+                payload.push(0x0A);
+            }
+
+            // Texto vía VecDriver + escpos (omitimos init para no pisar el ESC @ inicial)
+            let (driver, shared_buf) = VecDriver::new();
+            (|| -> escpos::errors::Result<()> {
+                use escpos::{printer::Printer, utils::*};
+                let mut p = Printer::new(driver, Protocol::default(), None);
+                // No llamamos init() para no insertar otro ESC @ que resetearía el estado
+                if !title.is_empty() {
+                    p.justify(JustifyMode::CENTER)?
+                        .bold(true)?
+                        .writeln(&title)?
+                        .bold(false)?
+                        .justify(JustifyMode::LEFT)?;
+                }
+                for line in &body_lines {
+                    p.writeln(line)?;
+                }
+                p.feeds(4)?.print_cut()?;
+                Ok(())
+            })()
+            .map_err(|e| format!("Error de impresión: {e}"))?;
+
+            payload.extend_from_slice(&shared_buf.lock().unwrap());
+            print_raw_cups(queue, &payload)?;
         }
-
-        for line in &body_lines {
-            p.writeln(line)?;
-        }
-
-        p.feeds(4)?.print_cut()?;
-        Ok(())
-    })()
-    .map_err(|e| format!("Error de impresión: {e}"))?;
+    }
 
     Ok(format!("Enviado a \u{ab}{}\u{bb}", printer_name))
 }
 
-/// Resuelve la dirección TCP (host, puerto) de una impresora de red.
+/// Backend de conexión para una impresora registrada en el sistema.
+enum PrinterBackend {
+    /// Impresora de red accesible por TCP socket (URI `socket://ip:puerto`).
+    Network(String, u16),
+    /// Impresora USB registrada en CUPS (URI `usb://`, `ipp://`, `lpd://`, etc.).
+    /// Los datos ESC/POS se envían como trabajo raw vía `lp -d queue -o raw`.
+    CupsRaw(String),
+}
+
+/// Determina cómo conectar con una impresora CUPS por su nombre de cola.
 ///
-/// macOS/Linux: parsea el URI de `lpstat -v` buscando `socket://`.
-/// Windows: consulta `PrinterHostAddress` del puerto vía PowerShell.
-fn resolve_printer_address(printer_name: &str) -> Result<(String, u16), String> {
+/// - `socket://` → [`PrinterBackend::Network`] (ESC/POS directo por TCP)
+/// - `usb://`, `ipp://`, `lpd://` → [`PrinterBackend::CupsRaw`] (job raw vía `lp`)
+fn resolve_printer_backend(printer_name: &str) -> Result<PrinterBackend, String> {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         use std::process::Command;
@@ -806,26 +1026,37 @@ fn resolve_printer_address(printer_name: &str) -> Result<(String, u16), String> 
             .output()
             .map_err(|e| format!("No se pudo ejecutar lpstat: {e}"))?;
         let text = String::from_utf8_lossy(&out.stdout).to_string();
-        let line = text
-            .lines()
-            .find(|l| l.to_lowercase().contains("socket://"))
-            .ok_or_else(|| format!(
-                "No se encontró dirección socket para \u{ab}{printer_name}\u{bb}.\n\
-                 Asegúrate de que la impresora usa protocolo Socket/TCP en CUPS."
-            ))?;
-        let uri = line
-            .split_whitespace()
-            .find(|t| t.to_lowercase().starts_with("socket://"))
-            .unwrap_or("");
-        let raw = uri
-            .trim_start_matches("socket://")
-            .trim_end_matches('/')
-            .trim_end_matches('\\');
-        if let Some((host, port_str)) = raw.split_once(':') {
-            Ok((host.to_string(), port_str.parse().unwrap_or(9100)))
-        } else {
-            Ok((raw.to_string(), 9100))
+
+        // Impresora de red (socket://)
+        if let Some(line) = text.lines().find(|l| l.to_lowercase().contains("socket://")) {
+            let uri = line
+                .split_whitespace()
+                .find(|t| t.to_lowercase().starts_with("socket://"))
+                .unwrap_or("");
+            let raw = uri
+                .trim_start_matches("socket://")
+                .trim_end_matches('/')
+                .trim_end_matches('\\');
+            let (host, port) = if let Some((h, p)) = raw.split_once(':') {
+                (h.to_string(), p.parse().unwrap_or(9100))
+            } else {
+                (raw.to_string(), 9100)
+            };
+            return Ok(PrinterBackend::Network(host, port));
         }
+
+        // Impresora USB u otro tipo CUPS (usb://, ipp://, lpd://, ...)
+        if text.lines().any(|l| {
+            let lo = l.to_lowercase();
+            lo.contains("usb://") || lo.contains("ipp://") || lo.contains("lpd://")
+        }) {
+            return Ok(PrinterBackend::CupsRaw(printer_name.to_string()));
+        }
+
+        Err(format!(
+            "No se encontró dirección para \u{ab}{printer_name}\u{bb}.\n\
+             Asegúrate de que la impresora está instalada en CUPS."
+        ))
     }
 
     #[cfg(target_os = "windows")]
@@ -846,12 +1077,41 @@ fn resolve_printer_address(printer_name: &str) -> Result<(String, u16), String> 
         if host.is_empty() || host.to_lowercase().contains("null") {
             Err(format!("No se encontró la IP de \u{ab}{printer_name}\u{bb}."))
         } else {
-            Ok((host, 9100))
+            Ok(PrinterBackend::Network(host, 9100))
         }
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     Err("Sistema operativo no soportado".to_string())
+}
+
+/// Envía datos ESC/POS crudos a una cola CUPS.
+/// Escribe en un archivo temporal y usa `lp -d queue -o raw`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn print_raw_cups(queue_name: &str, data: &[u8]) -> Result<(), String> {
+    let tmp = format!(
+        "/private/tmp/pm_escpos_{}.bin",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    std::fs::write(&tmp, data).map_err(|e| format!("Error al crear archivo temporal: {e}"))?;
+    let out = std::process::Command::new("lp")
+        .args(["-d", queue_name, "-o", "raw", &tmp])
+        .output()
+        .map_err(|e| format!("Error al ejecutar lp: {e}"))?;
+    let _ = std::fs::remove_file(&tmp);
+    if out.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        Err(format!(
+            "Error al imprimir: {}",
+            if !stderr.is_empty() { stderr } else { stdout }
+        ))
+    }
 }
 
 // ─── ESC/POS directo a USB ───────────────────────────────────────────────────
@@ -1017,4 +1277,359 @@ fn write_to_serial_port(port_name: &str, data: &[u8]) -> Result<String, String> 
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     Err("Sistema operativo no soportado".to_string())
+}
+
+/// Registra una impresora USB en CUPS buscando su URI con `lpinfo -v`.
+/// Si hay una sola impresora USB disponible, la registra directamente.
+/// Si hay varias, intenta hacer coincidir por `device_name`.
+#[tauri::command]
+pub fn add_usb_printer(device_name: String, cups_name: String) -> Result<String, String> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        use std::process::Command;
+
+        // Obtener lista de URIs de impresoras USB disponibles
+        let out = Command::new("lpinfo")
+            .arg("-v")
+            .output()
+            .map_err(|_| "No se pudo ejecutar lpinfo. ¿Está CUPS disponible?".to_string())?;
+
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+
+        let usb_uris: Vec<String> = text
+            .lines()
+            .filter(|l| l.contains("usb://"))
+            .filter_map(|l| l.split_whitespace().nth(1))
+            .map(|s| s.to_string())
+            .collect();
+
+        if usb_uris.is_empty() {
+            return Err(
+                "No se detectaron impresoras USB disponibles. Verifique que la impresora esté conectada y encendida."
+                    .to_string(),
+            );
+        }
+
+        // Intentar hacer coincidir la URI con el nombre del dispositivo
+        let search = device_name.to_lowercase().replace(' ', "").replace('-', "");
+        let uri = usb_uris
+            .iter()
+            .find(|uri| {
+                let u = uri.to_lowercase().replace("%20", "").replace('+', "").replace('-', "");
+                u.contains(&search)
+            })
+            .unwrap_or(&usb_uris[0])
+            .clone();
+
+        // Buscar driver genérico disponible (igual que add_network_printer).
+        // NO usar "-m everywhere" para USB: requiere IPP sobre red y falla.
+        let driver_flag: String = Command::new("lpinfo")
+            .arg("-m")
+            .output()
+            .ok()
+            .and_then(|out| {
+                let text = String::from_utf8_lossy(&out.stdout).to_string();
+                for candidate in &[
+                    "Generic-PDF_Printer",
+                    "Generic PostScript Printer",
+                    "generic.ppd",
+                    "drv:///sample.drv/generic",
+                    "Generic",
+                ] {
+                    if let Some(line) =
+                        text.lines().find(|l| l.to_lowercase().contains(&candidate.to_lowercase()))
+                    {
+                        let model = line.split_whitespace().next().unwrap_or("").to_string();
+                        if !model.is_empty() {
+                            return Some(format!(" -m '{}'", model.replace("'", "\\'")));
+                        }
+                    }
+                }
+                None
+            })
+            .unwrap_or_default();
+
+        let safe_name = cups_name.replace("'", "\\'");
+        let lpadmin_cmd = format!(
+            "/usr/sbin/lpadmin -p '{}' -v '{}' -E{}",
+            safe_name, uri, driver_flag
+        );
+
+        let script_path = "/private/tmp/cups_add_usb.sh";
+        std::fs::write(
+            script_path,
+            format!("#!/bin/sh\nexport HOME=/private/tmp\ncd /private/tmp\n{}\n", lpadmin_cmd),
+        )
+        .map_err(|e| format!("Error al crear script: {}", e))?;
+        let _ = Command::new("chmod").args(["+x", script_path]).output();
+
+        println!("🖨️ USB lpadmin: {}", lpadmin_cmd);
+
+        let output = Command::new("osascript")
+            .args([
+                "-e",
+                &format!(
+                    "do shell script \"{}\" with administrator privileges",
+                    script_path
+                ),
+            ])
+            .output()
+            .map_err(|e| format!("Error al ejecutar osascript: {}", e))?;
+
+        let _ = std::fs::remove_file(script_path);
+
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let has_shell_init_warn = stderr.contains("shell-init") || stderr.contains("getcwd");
+        let has_real_error = stderr.contains("lpadmin:")
+            || stderr.contains("Unable to")
+            || stderr.contains("no se ha podido");
+
+        if output.status.success() || (has_shell_init_warn && !has_real_error) {
+            Ok(format!("Impresora USB '{}' registrada correctamente en CUPS.", cups_name))
+        } else if stderr.contains("User cancelled") || stderr.contains("cancelado") {
+            Err("Operación cancelada.".to_string())
+        } else {
+            Err(format!("Error al registrar: {}", stderr.trim()))
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = (device_name, cups_name);
+        Err("Agregar impresoras USB en Windows no está disponible desde esta herramienta.".to_string())
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// IMPRESIÓN DESDE PDF
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Recibe un PDF en base64, lo convierte a imagen y lo imprime.
+/// `width` acepta `"58mm"` (384 px @ 203 DPI, modo ESC* double density)
+/// o `"80mm"` (576 px @ 203 DPI, modo ESC* double density).
+pub fn print_pdf_job(pdf_b64: &str, printer_name: &str, width: &str) -> Result<String, String> {
+    use base64::Engine as _;
+
+    let pdf_bytes = base64::engine::general_purpose::STANDARD
+        .decode(pdf_b64.trim())
+        .map_err(|e| format!("Error decodificando PDF: {e}"))?;
+
+    let print_width_px: u32 = if width.contains("58") { 384 } else { 576 };
+
+    let png_bytes = render_pdf_to_png(&pdf_bytes, print_width_px)?;
+
+    // Para depuración, guardamos la imagen generada en Documentos
+    if let Ok(home) = std::env::var("HOME") {
+        let debug_path = format!("{}/Documents/debug_printer_monitor.png", home);
+        let _ = std::fs::write(&debug_path, &png_bytes);
+        println!("📸 Imagen debug guardada en: {}", debug_path);
+    }
+
+    let escstar = encode_image_escstar(&png_bytes, print_width_px)?;
+
+    let mut payload = vec![0x1B, 0x40u8]; // ESC @
+    payload.extend_from_slice(&escstar);
+    payload.extend_from_slice(&[0x0A, 0x0A, 0x0A, 0x0A]); // avance
+    payload.extend_from_slice(&[0x1D, 0x56, 0x41, 0x00]); // corte
+
+    match resolve_printer_backend(printer_name)? {
+        PrinterBackend::CupsRaw(ref queue) => {
+            print_raw_cups(queue, &payload)?;
+        }
+        PrinterBackend::Network(ref ip, port) => {
+            use std::io::Write;
+            let addr = format!("{ip}:{port}");
+            let mut stream = std::net::TcpStream::connect_timeout(
+                &addr.parse().map_err(|_| format!("Dirección inválida: {addr}"))?,
+                std::time::Duration::from_secs(5),
+            )
+            .map_err(|e| format!("No se pudo conectar a {addr}: {e}"))?;
+            stream.write_all(&payload).map_err(|e| format!("Error enviando datos: {e}"))?;
+        }
+    }
+
+    Ok(format!("PDF impreso en «{printer_name}»"))
+}
+
+/// Comando Tauri: imprime un PDF base64 en la impresora indicada.
+/// Usado desde Angular (y equivalente a `POST /api/print` para clientes externos).
+#[tauri::command]
+pub fn print_pdf(pdf_b64: String, printer_name: String, width: String) -> Result<String, String> {
+    print_pdf_job(&pdf_b64, &printer_name, &width)
+}
+
+// ─── Helpers internos de conversión PDF ──────────────────────────────────────
+
+/// Renderiza un PDF a PNG usando sips (nativo macOS) con supersampling 4x.
+/// sips renderiza PDFs a 72 DPI. Para obtener buena calidad pedimos 4× el ancho
+/// objetivo y luego Rust hace el downsampling con Lanczos3 (anti-aliasing real).
+fn render_pdf_to_png(pdf_bytes: &[u8], target_width_px: u32) -> Result<Vec<u8>, String> {
+    use std::process::Command;
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let pdf_path = format!("/private/tmp/pm_{ts}.pdf");
+    let png_path = format!("/private/tmp/pm_{ts}.png");
+
+    std::fs::write(&pdf_path, pdf_bytes)
+        .map_err(|e| format!("Error guardando PDF temporal: {e}"))?;
+
+    // Renderizar a 4× el ancho objetivo para calidad (luego downsampling)
+    let super_width = target_width_px * 4;
+    let out = Command::new("sips")
+        .args([
+            "-s", "format", "png",
+            "--resampleWidth", &super_width.to_string(),
+            &pdf_path,
+            "--out", &png_path,
+        ])
+        .output();
+    let _ = std::fs::remove_file(&pdf_path);
+    let out = out.map_err(|e| format!("Error ejecutando sips: {e}"))?;
+
+    if !out.status.success() {
+        let _ = std::fs::remove_file(&png_path);
+        return Err(format!(
+            "sips error: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+
+    // Leer PNG — sips puede generar página única o múltiples (base-1.png, base-2.png…)
+    let super_bytes = if std::path::Path::new(&png_path).exists() {
+        let b = std::fs::read(&png_path).map_err(|e| format!("Error leyendo PNG: {e}"))?;
+        let _ = std::fs::remove_file(&png_path);
+        b
+    } else {
+        let base = png_path.trim_end_matches(".png");
+        let mut pages = Vec::new();
+        let mut i = 1usize;
+        loop {
+            let p = format!("{base}-{i}.png");
+            match std::fs::read(&p) {
+                Ok(b) => { let _ = std::fs::remove_file(&p); pages.push(b); i += 1; }
+                Err(_) => break,
+            }
+        }
+        if pages.is_empty() {
+            return Err("sips no generó imágenes".to_string());
+        }
+        stitch_pages_vertical(&pages, super_width)?
+    };
+
+    // Devolvemos directamente la imagen en alta resolución (4x).
+    // encode_image_escstar se encargará de escalarla en el momento de crear
+    // el buffer blanco/negro de dithering para no perder detalles por escalados dobles.
+    Ok(super_bytes)
+}
+
+/// Lee páginas generadas por ImageMagick para un PDF multi-página.
+/// ImageMagick nombra las páginas: base-0.png, base-1.png, …
+fn collect_png_pages_magick(base_png: &str) -> Vec<Vec<u8>> {
+    let base = base_png.trim_end_matches(".png");
+    let mut pages = Vec::new();
+    let mut i = 0usize;
+    loop {
+        let path = format!("{base}-{i}.png");
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let _ = std::fs::remove_file(&path);
+                pages.push(bytes);
+                i += 1;
+            }
+            Err(_) => break,
+        }
+    }
+    pages
+}
+
+/// Lee páginas generadas por sips para un PDF multi-página.
+/// sips nombra las páginas: base-1.png, base-2.png, …
+fn collect_png_pages(base_png: &str) -> Vec<Vec<u8>> {
+    let base = base_png.trim_end_matches(".png");
+    let mut pages = Vec::new();
+    let mut i = 1usize;
+    loop {
+        let path = format!("{base}-{i}.png");
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let _ = std::fs::remove_file(&path);
+                pages.push(bytes);
+                i += 1;
+            }
+            Err(_) => break,
+        }
+    }
+    pages
+}
+
+/// Apila una lista de PNGs verticalmente en una única imagen.
+fn stitch_pages_vertical(pages: &[Vec<u8>], target_width: u32) -> Result<Vec<u8>, String> {
+    use image::{DynamicImage, RgbImage};
+
+    let mut decoded: Vec<DynamicImage> = pages
+        .iter()
+        .map(|bytes| image::load_from_memory(bytes).map_err(|e| format!("Error cargando página: {e}")))
+        .collect::<Result<_, _>>()?;
+
+    // Normalizar ancho
+    for img in &mut decoded {
+        if img.width() != target_width {
+            *img = img.resize_exact(
+                target_width,
+                (img.height() as f64 * target_width as f64 / img.width().max(1) as f64) as u32,
+                image::imageops::FilterType::Lanczos3,
+            );
+        }
+    }
+
+    let total_h: u32 = decoded.iter().map(|i| i.height()).sum();
+    let mut canvas = RgbImage::new(target_width, total_h);
+    for p in canvas.pixels_mut() {
+        *p = image::Rgb([255, 255, 255]);
+    }
+
+    let mut y_off = 0u32;
+    for img in &decoded {
+        for (x, y, p) in img.to_rgb8().enumerate_pixels() {
+            canvas.put_pixel(x, y + y_off, *p);
+        }
+        y_off += img.height();
+    }
+
+    let mut out = Vec::new();
+    DynamicImage::from(canvas)
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .map_err(|e| format!("Error codificando imagen: {e}"))?;
+    Ok(out)
+}
+
+/// Recorta las filas completamente blancas del final de la imagen (elimina
+/// el espacio en blanco sobrante del PDF que pdfmake genera con altura fija).
+fn trim_white_rows_bottom(png_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let img = image::load_from_memory(png_bytes)
+        .map_err(|e| format!("Error cargando imagen: {e}"))?;
+    let gray = img.to_luma8();
+    let (w, h) = (gray.width(), gray.height());
+
+    // Última fila con al menos un píxel no-blanco
+    let mut last_y = 0u32;
+    for y in 0..h {
+        if (0..w).any(|x| gray.get_pixel(x, y).0[0] < 248) {
+            last_y = y;
+        }
+    }
+
+    let keep_h = (last_y + 24).min(h);
+    if keep_h >= h {
+        return Ok(png_bytes.to_vec()); // nada que recortar
+    }
+
+    let mut out = Vec::new();
+    img.crop_imm(0, 0, w, keep_h)
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .map_err(|e| format!("Error codificando PNG recortado: {e}"))?;
+    Ok(out)
 }

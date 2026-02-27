@@ -140,8 +140,23 @@ export class TauriService {
     return invoke<string>('restore_network_dhcp');
   }
 
+  /**
+   * Imprime un PDF (base64) en la impresora indicada.
+   * Rust lo convierte a imagen con sips y lo envía vía ESC*.
+   */
+  async printPdf(pdfB64: string, printerName: string, width: '58mm' | '80mm'): Promise<string> {
+    return invoke<string>('print_pdf', { pdfB64, printerName, width });
+  }
+
   async addNetworkPrinter(ip: string, name: string): Promise<string> {
     return invoke<string>('add_network_printer', { ip, name });
+  }
+
+  /**
+   * Registra una impresora USB en CUPS usando su URI detectada por lpinfo.
+   */
+  async addUsbPrinter(deviceName: string, cupsName: string): Promise<string> {
+    return invoke<string>('add_usb_printer', { deviceName, cupsName });
   }
 
   async clearPrintQueue(printerName: string): Promise<string> {

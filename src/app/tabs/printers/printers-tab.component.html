@@ -10,6 +10,16 @@
     </div>
   }
 
+  @if (printers.pdfPrintResult()) {
+    <div class="flex items-start gap-2 p-3 rounded-lg text-sm border"
+         [class.bg-green-50]="printers.pdfPrintResult()!.ok" [class.border-green-200]="printers.pdfPrintResult()!.ok" [class.text-green-700]="printers.pdfPrintResult()!.ok"
+         [class.bg-red-50]="!printers.pdfPrintResult()!.ok" [class.border-red-200]="!printers.pdfPrintResult()!.ok" [class.text-red-600]="!printers.pdfPrintResult()!.ok"
+         role="status">
+      <ng-icon [name]="printers.pdfPrintResult()!.ok ? 'matCheck' : 'matClose'" size="16" class="shrink-0 mt-px"></ng-icon>
+      {{ printers.pdfPrintResult()!.message }}
+    </div>
+  }
+
   <section aria-labelledby="printers-title">
     <h2 class="section-title" id="printers-title">
       Impresoras instaladas
@@ -97,6 +107,24 @@
                     {{ sz.label }}
                   </button>
                 }
+
+                <!-- Botones PDF: generan con pdfmake → Rust convierte a imagen y imprime -->
+                <div class="w-px h-5 bg-slate-200 self-center mx-0.5"></div>
+                @for (sz of pdfWidths; track sz.key) {
+                  <button appBtn variant="ghost" size="sm"
+                          (click)="printers.printTestPdf(printer, sz.key)"
+                          [disabled]="printers.pdfPrintingFor() !== null || printers.printingFor() !== null"
+                          [attr.aria-busy]="printers.isPdfPrinting(printer, sz.key)"
+                          [attr.aria-label]="'PDF ' + sz.label + ' en ' + printer.name"
+                          title="Generar PDF de prueba con pdfmake y enviarlo a imprimir">
+                    @if (printers.isPdfPrinting(printer, sz.key)) {
+                      <span class="w-3 h-3 border-2 border-current border-r-transparent rounded-full animate-spin"></span>
+                    } @else {
+                      <ng-icon name="matPrint" size="13"></ng-icon>
+                    }
+                    PDF {{ sz.label }}
+                  </button>
+                }
                 <button appBtn variant="ghost" size="sm"
                         (click)="printers.clearQueue(printer)"
                         [disabled]="printers.clearingFor() !== null || printers.printingFor() !== null"
@@ -117,6 +145,48 @@
       </ul>
     }
   </section>
+
+  <!-- Impresoras USB detectadas (sin registrar en CUPS) -->
+  @if (printers.usbPrinters().length > 0) {
+    <section aria-labelledby="usb-printers-title">
+      <h2 class="section-title" id="usb-printers-title">
+        Impresoras USB detectadas
+        <span class="badge">{{ printers.usbPrinters().length }}</span>
+      </h2>
+
+      @if (printers.usbAddResult()) {
+        <div class="flex items-start gap-2 p-3 mb-3 rounded-lg text-xs border"
+             [class.bg-green-50]="printers.usbAddResult()!.ok" [class.border-green-200]="printers.usbAddResult()!.ok" [class.text-green-700]="printers.usbAddResult()!.ok"
+             [class.bg-red-50]="!printers.usbAddResult()!.ok" [class.border-red-200]="!printers.usbAddResult()!.ok" [class.text-red-600]="!printers.usbAddResult()!.ok"
+             role="status">
+          <ng-icon [name]="printers.usbAddResult()!.ok ? 'matCheck' : 'matClose'" size="14" class="shrink-0 mt-px"></ng-icon>
+          {{ printers.usbAddResult()!.message }}
+        </div>
+      }
+
+      <div class="flex flex-col gap-1.5">
+        @for (device of printers.usbPrinters(); track device.port_name) {
+          <app-card padding="sm">
+            <div class="flex items-center justify-between gap-2 px-1 flex-wrap">
+              <div class="flex items-center gap-2.5">
+                <ng-icon name="matPrint" size="18" class="text-violet-500 shrink-0"></ng-icon>
+                <div class="flex flex-col">
+                  <span class="text-sm font-medium text-slate-900">{{ device.description || device.port_name }}</span>
+                  <span class="text-[11px] text-slate-400">USB directo · No registrada en CUPS</span>
+                </div>
+              </div>
+              <button appBtn variant="primary" size="sm"
+                      (click)="printers.openAddUsbPrinterDialog(device.port_name, device.description)"
+                      [disabled]="printers.usbSavingPrinter()">
+                <ng-icon name="matAdd" size="14"></ng-icon>
+                Registrar en CUPS
+              </button>
+            </div>
+          </app-card>
+        }
+      </div>
+    </section>
+  }
 
   <!-- Escáner TCP/IP -->
   <section aria-labelledby="tcp-scan-title">
@@ -200,9 +270,35 @@
       </div>
     }
   </section>
+
+  <!-- ── Previsualización del último PDF generado ───────────────────── -->
+  @if (printers.pdfPreviewUrl()) {
+    <section aria-labelledby="pdf-preview-title">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="section-title mb-0" id="pdf-preview-title">
+          <ng-icon name="matPictureAsPdf" size="16" class="text-red-500"></ng-icon>
+          Preview del PDF generado
+          <span class="text-xs font-normal text-slate-400">(si se ve aquí, el problema está en Rust/impresora)</span>
+        </h2>
+        <button appBtn variant="ghost" size="sm"
+                (click)="printers.closePdfPreview()"
+                aria-label="Cerrar preview">
+          <ng-icon name="matClose" size="14"></ng-icon>
+        </button>
+      </div>
+      <app-card padding="none" class="overflow-hidden">
+        <iframe [src]="safePdfUrl()"
+                class="w-full border-0"
+                style="height: 420px"
+                title="Previsualización del PDF">
+        </iframe>
+      </app-card>
+    </section>
+  }
+
 </div>
 
-<!-- Diálogo nativo para agregar impresora -->
+<!-- Diálogo para agregar impresora de red -->
 <dialog #addPrinterDialog class="rounded-lg p-0 backdrop:bg-black/50 border-0 shadow-xl max-w-md w-full">
   @if (printers.addingPrinter()) {
     <div class="flex flex-col">
@@ -258,6 +354,70 @@
           } @else {
             <ng-icon name="matCheck" size="14"></ng-icon>
             Agregar impresora
+          }
+        </button>
+      </div>
+    </div>
+  }
+</dialog>
+
+<!-- Diálogo para registrar impresora USB en CUPS -->
+<dialog #addUsbPrinterDialog class="rounded-lg p-0 backdrop:bg-black/50 border-0 shadow-xl max-w-md w-full">
+  @if (printers.usbAddingFor()) {
+    <div class="flex flex-col">
+      <div class="flex items-center justify-between p-4 border-b border-slate-200">
+        <h3 class="font-semibold text-lg text-slate-900">Registrar impresora USB</h3>
+        <button appBtn variant="ghost" size="sm" (click)="printers.closeAddUsbPrinterDialog()" type="button">
+          <ng-icon name="matClose" size="16"></ng-icon>
+        </button>
+      </div>
+      <div class="p-4 flex flex-col gap-4">
+        @if (printers.usbSavingPrinter()) {
+          <div class="flex items-center gap-3 p-4 rounded-lg bg-blue-50 border border-blue-200">
+            <span class="w-5 h-5 border-2 border-blue-500 border-r-transparent rounded-full animate-spin shrink-0"></span>
+            <div class="flex flex-col">
+              <span class="text-sm font-medium text-blue-900">Registrando impresora...</span>
+              <span class="text-xs text-blue-600">Puede aparecer un diálogo solicitando permisos de administrador</span>
+            </div>
+          </div>
+        } @else {
+          <div class="flex items-center gap-2 p-3 rounded-lg bg-violet-50 border border-violet-200">
+            <ng-icon name="matPrint" size="20" class="text-violet-600"></ng-icon>
+            <div class="flex flex-col">
+              <span class="text-xs text-violet-600 font-medium">Dispositivo USB</span>
+              <span class="font-mono text-sm font-semibold text-violet-900">{{ printers.usbAddingFor() }}</span>
+            </div>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label for="usbPrinterName" class="label-xs">Nombre en CUPS</label>
+            <input
+              id="usbPrinterName"
+              type="text"
+              class="h-9 px-3 rounded-md border border-slate-300 text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              placeholder="Ej: Impresora Termica"
+              [value]="printers.usbPrinterNameInput()"
+              (input)="printers.usbPrinterNameInput.set($any($event.target).value)"
+              (keydown.enter)="printers.confirmAddUsbPrinter()"
+              [disabled]="printers.usbSavingPrinter()"
+              autofocus />
+          </div>
+          <p class="text-xs text-slate-500">
+            Se buscará la URI USB automáticamente con <span class="font-mono">lpinfo -v</span> y se registrará en CUPS.
+            Una vez registrada, aparecerá en la lista de impresoras instaladas.
+          </p>
+        }
+      </div>
+      <div class="flex gap-2 p-4 border-t border-slate-200 bg-slate-50">
+        <button appBtn variant="ghost" size="sm" (click)="printers.closeAddUsbPrinterDialog()" type="button" class="flex-1" [disabled]="printers.usbSavingPrinter()">
+          Cancelar
+        </button>
+        <button appBtn variant="primary" size="sm" (click)="printers.confirmAddUsbPrinter()" [disabled]="!printers.usbPrinterNameInput() || printers.usbSavingPrinter()" type="button" class="flex-1">
+          @if (printers.usbSavingPrinter()) {
+            <span class="w-3 h-3 border-2 border-white border-r-transparent rounded-full animate-spin"></span>
+            Registrando...
+          } @else {
+            <ng-icon name="matCheck" size="14"></ng-icon>
+            Registrar en CUPS
           }
         </button>
       </div>

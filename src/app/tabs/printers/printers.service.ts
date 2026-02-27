@@ -1,14 +1,16 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, inject, signal, computed } from '@angular/core';
 import { TauriService, PrinterInfo, SerialPort } from '../../services/tauri.service';
+import { PdfService, PdfPrintWidth } from '../../services/pdf.service';
 import { NetworkService } from '../network/network.service';
 
-export type PrintSize = 'a4' | 'thermal_58mm' | 'thermal_80mm';
+export type PrintSize = 'thermal_58mm' | 'thermal_80mm';
 export type ThermalSize = 'thermal_58mm' | 'thermal_80mm';
 
 @Injectable({ providedIn: 'root' })
 export class PrintersService {
   private readonly tauri = inject(TauriService);
   private readonly network = inject(NetworkService);
+  private readonly pdf = inject(PdfService);
 
   // ── Estado de la lista ─────────────────────────────────────────────────
   readonly loading = signal(true);
@@ -38,6 +40,57 @@ export class PrintersService {
   readonly addingPrinter = signal<string | null>(null);
   readonly printerNameInput = signal('');
   readonly savingPrinter = signal(false);
+  // ── Impresión PDF ─────────────────────────────────────────
+  readonly pdfPrintingFor = signal<string | null>(null);
+  readonly pdfPrintResult = signal<{ ok: boolean; message: string } | null>(null);
+  /** URL de objeto (blob:) del último PDF generado — para previsualización. */
+  readonly pdfPreviewUrl = signal<string | null>(null);
+
+  async printTestPdf(printer: PrinterInfo, width: PdfPrintWidth): Promise<void> {
+    const key = `${printer.queue_name}::pdf_${width}`;
+    this.pdfPrintingFor.set(key);
+    this.pdfPrintResult.set(null);
+    // Revoca la URL anterior para liberar memoria
+    const prev = this.pdfPreviewUrl();
+    if (prev) URL.revokeObjectURL(prev);
+    this.pdfPreviewUrl.set(null);
+    try {
+      // 1. Generar PDF en base64 (pdfmake — solo frontend)
+      const docDef = this.pdf.testDocDef(printer.queue_name);
+      const b64 = await this.pdf.toPdfBase64(docDef);
+
+      // 2. Crear URL de objeto para previsualización inmediata
+      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: 'application/pdf' });
+      this.pdfPreviewUrl.set(URL.createObjectURL(blob));
+
+      // 3. Enviar base64 a Rust para imprimir
+      const result = await this.tauri.printPdf(b64, printer.queue_name, width);
+      this.pdfPrintResult.set({ ok: true, message: result });
+    } catch (e) {
+      this.pdfPrintResult.set({ ok: false, message: String(e) });
+    } finally {
+      this.pdfPrintingFor.set(null);
+    }
+  }
+
+  closePdfPreview(): void {
+    const url = this.pdfPreviewUrl();
+    if (url) URL.revokeObjectURL(url);
+    this.pdfPreviewUrl.set(null);
+  }
+
+  isPdfPrinting(printer: PrinterInfo, width: PdfPrintWidth): boolean {
+    return this.pdfPrintingFor() === `${printer.queue_name}::pdf_${width}`;
+  }
+  // ── Impresoras USB detectadas (sin registrar en CUPS) ──────────────────
+  readonly usbPrinters = computed(() =>
+    this.serialPorts().filter(p => p.device_type === 'USB-Printer')
+  );
+  readonly usbAddingFor = signal<string | null>(null);  // port_name del dispositivo
+  readonly usbPrinterNameInput = signal('');
+  readonly usbSavingPrinter = signal(false);
+  readonly usbAddResult = signal<{ ok: boolean; message: string } | null>(null);
 
   async refresh(): Promise<void> {
     this.loading.set(true);
@@ -149,6 +202,37 @@ export class PrintersService {
       console.error('Error al escanear impresoras TCP/IP:', e);
     } finally {
       this.scanningPrinters.set(false);
+    }
+  }
+
+  openAddUsbPrinterDialog(portName: string, deviceName: string): void {
+    this.usbAddingFor.set(portName);
+    this.usbPrinterNameInput.set(deviceName || portName);
+    this.usbAddResult.set(null);
+  }
+
+  closeAddUsbPrinterDialog(): void {
+    this.usbAddingFor.set(null);
+    this.usbPrinterNameInput.set('');
+    this.usbSavingPrinter.set(false);
+  }
+
+  async confirmAddUsbPrinter(): Promise<void> {
+    const portName = this.usbAddingFor();
+    const name = this.usbPrinterNameInput().trim();
+    if (!portName || !name) return;
+
+    this.usbSavingPrinter.set(true);
+    this.usbAddResult.set(null);
+    try {
+      const result = await this.tauri.addUsbPrinter(portName, name);
+      this.usbAddResult.set({ ok: true, message: result });
+      this.closeAddUsbPrinterDialog();
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      await this.refresh();
+    } catch (e) {
+      this.usbAddResult.set({ ok: false, message: String(e) });
+      this.usbSavingPrinter.set(false);
     }
   }
 

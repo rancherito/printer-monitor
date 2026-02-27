@@ -63,24 +63,38 @@ fn find_free_port(start: u16) -> u16 {
     (start..=65535).find(|&p| port_is_free(p)).unwrap_or(start)
 }
 
+/// Puerto activo cacheado para que todas las llamadas devuelvan
+/// el mismo valor aunque el servidor ya esté vinculado al puerto.
+static ACTIVE_PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
 pub(crate) fn resolve_port(app: &tauri::AppHandle) -> u16 {
-    if cfg!(debug_assertions) {
-        return find_free_port(9002);
+    if let Some(&p) = ACTIVE_PORT.get() {
+        return p;
     }
-    let conn = match open_db(app) {
-        Ok(c) => c,
-        Err(_) => return find_free_port(9003),
-    };
-    let preferred: u16 = db_get(&conn, "port_prod")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(9003);
-    let active = if port_is_free(preferred) {
-        preferred
+    let port = if cfg!(debug_assertions) {
+        find_free_port(9002)
     } else {
-        find_free_port(preferred + 1)
+        let conn = match open_db(app) {
+            Ok(c) => c,
+            Err(_) => {
+                let p = find_free_port(9003);
+                let _ = ACTIVE_PORT.set(p);
+                return p;
+            }
+        };
+        let preferred: u16 = db_get(&conn, "port_prod")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(9003);
+        let active = if port_is_free(preferred) {
+            preferred
+        } else {
+            find_free_port(preferred + 1)
+        };
+        let _ = db_set(&conn, "port_prod", &active.to_string());
+        active
     };
-    let _ = db_set(&conn, "port_prod", &active.to_string());
-    active
+    let _ = ACTIVE_PORT.set(port);
+    port
 }
 
 #[tauri::command]

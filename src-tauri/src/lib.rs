@@ -1,3 +1,4 @@
+mod api_server;
 mod bluetooth;
 mod network;
 mod printers;
@@ -86,6 +87,9 @@ pub fn run() {
                     .build(app)?;
             }
 
+            // Iniciar servidor HTTP de impresión en puerto fijo 8001
+            std::thread::spawn(|| crate::api_server::start());
+
             system::start_printer_watcher(app.handle().clone());
             Ok(())
         })
@@ -96,8 +100,10 @@ pub fn run() {
             printers::print_test_usb,
             printers::print_test_tcp,
             printers::add_network_printer,
+            printers::add_usb_printer,
             printers::clear_print_queue,
             printers::print_image_ticket,
+            printers::print_pdf,
             serial::get_serial_ports,
             settings::get_settings,
             settings::set_setting,

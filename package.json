@@ -39,6 +39,7 @@
     "@tailwindcss/postcss": "^4.2.1",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-autostart": "^2.5.1",
+    "pdfmake": "^0.3.5",
     "postcss": "^8.5.6",
     "rxjs": "~7.8.0",
     "tailwindcss": "^4.2.1",
@@ -49,6 +50,7 @@
     "@angular/cli": "^21.1.5",
     "@angular/compiler-cli": "^21.1.0",
     "@tauri-apps/cli": "^2.10.0",
+    "@types/pdfmake": "^0.3.2",
     "typescript": "~5.9.2"
   }
 }
