@@ -3,42 +3,42 @@
     <div class="flex items-center justify-between mb-2">
       <h2 class="section-title mb-0" id="bt-title">
         Dispositivos Bluetooth
-        @if (bluetoothLoaded()) { <span class="badge">{{ bluetoothDevices().length }}</span> }
+        @if (bluetooth.bluetoothLoaded()) { <span class="badge">{{ bluetooth.bluetoothDevices().length }}</span> }
       </h2>
-      <button appBtn variant="primary" size="sm" (click)="loadBluetoothClick.emit()" [disabled]="loadingBluetooth()">
-        @if (loadingBluetooth()) {
+      <button appBtn variant="primary" size="sm" (click)="bluetooth.loadBluetooth()" [disabled]="bluetooth.loadingBluetooth()">
+        @if (bluetooth.loadingBluetooth()) {
           <span class="w-3 h-3 border-2 border-white border-r-transparent rounded-full animate-spin"></span>
           Cargando...
         } @else {
           <ng-icon name="matBluetooth" size="14"></ng-icon>
-          {{ bluetoothLoaded() ? 'Actualizar' : 'Cargar dispositivos' }}
+          {{ bluetooth.bluetoothLoaded() ? 'Actualizar' : 'Cargar dispositivos' }}
         }
       </button>
     </div>
 
-    @if (bluetoothError()) {
+    @if (bluetooth.bluetoothError()) {
       <div class="flex items-start gap-2 p-3 rounded-lg text-sm border bg-red-50 border-red-200 text-red-600" role="alert">
         <ng-icon name="matClose" size="16" class="shrink-0 mt-px"></ng-icon>
-        {{ bluetoothError() }}
+        {{ bluetooth.bluetoothError() }}
       </div>
-    } @else if (loadingBluetooth()) {
+    } @else if (bluetooth.loadingBluetooth()) {
       <app-card padding="md" class="flex items-center gap-3 text-sm text-slate-500">
         <span class="w-4 h-4 border-2 border-blue-500 border-r-transparent rounded-full animate-spin shrink-0"></span>
         Obteniendo dispositivos Bluetooth...
       </app-card>
-    } @else if (!bluetoothLoaded()) {
+    } @else if (!bluetooth.bluetoothLoaded()) {
       <app-card padding="lg" class="flex flex-col items-center gap-3 text-center">
         <ng-icon name="matBluetooth" size="40" class="text-slate-200"></ng-icon>
         <p class="text-sm text-slate-500">Pulsa "Cargar dispositivos" para ver los equipos emparejados.</p>
       </app-card>
-    } @else if (bluetoothDevices().length === 0) {
+    } @else if (bluetooth.bluetoothDevices().length === 0) {
       <app-card padding="lg" class="flex flex-col items-center gap-3 text-center">
         <ng-icon name="matBluetooth" size="40" class="text-slate-200"></ng-icon>
         <p class="text-sm text-slate-500">No se encontraron dispositivos Bluetooth emparejados.</p>
       </app-card>
     } @else {
       <div class="flex flex-col gap-2">
-        @for (d of bluetoothDevices(); track d.address) {
+        @for (d of bluetooth.bluetoothDevices(); track d.address) {
           <app-card padding="md">
             <div class="flex items-center justify-between gap-3">
               <div class="flex items-center gap-3">

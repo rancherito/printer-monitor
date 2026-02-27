@@ -3,7 +3,7 @@ import { provideIcons } from '@ng-icons/core';
 import {
   matDashboard, matPrint, matLan, matBluetooth, matRefresh,
   matUsb, matEdit, matClose, matCheck, matSearch, matPowerSettingsNew,
-  matRouter, matWifi, matAdd, matSettings,
+  matRouter, matWifi, matAdd, matSettings, matLayersClear, matKeyboard,
 } from '@ng-icons/material-icons/baseline';
 
 export const appConfig: ApplicationConfig = {
@@ -12,7 +12,7 @@ export const appConfig: ApplicationConfig = {
     provideIcons({
       matDashboard, matPrint, matLan, matBluetooth, matRefresh,
       matUsb, matEdit, matClose, matCheck, matSearch, matPowerSettingsNew,
-      matRouter, matWifi, matAdd, matSettings,
+      matRouter, matWifi, matAdd, matSettings, matLayersClear, matKeyboard,
     }),
   ],
 };

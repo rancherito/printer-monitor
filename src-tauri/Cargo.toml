@@ -30,3 +30,6 @@ tauri-plugin-autostart = "2"
 chrono = { version = "0.4", features = ["clock"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 tauri-plugin-single-instance = "2"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+escpos = { version = "0.17.0", features = ["graphics"] }
+base64 = "0.22"

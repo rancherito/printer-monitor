@@ -72,7 +72,7 @@ export class TauriService {
     return invoke<number>('get_app_port');
   }
 
-  async printTest(printerName: string, size: 'a4' | 'thermal_50mm' | 'thermal_80mm'): Promise<string> {
+  async printTest(printerName: string, size: 'a4' | 'thermal_58mm' | 'thermal_80mm'): Promise<string> {
     return invoke<string>('print_test', { printerName, size });
   }
 
@@ -80,8 +80,16 @@ export class TauriService {
    * Envía una página de prueba ESC/POS directamente al puerto USB/serie indicado,
    * sin pasar por CUPS. Usar para impresoras térmicas no registradas en el sistema.
    */
-  async printTestUsb(portName: string, size: 'thermal_50mm' | 'thermal_80mm'): Promise<string> {
+  async printTestUsb(portName: string, size: 'thermal_58mm' | 'thermal_80mm'): Promise<string> {
     return invoke<string>('print_test_usb', { portName, size });
+  }
+
+  /**
+   * Envía una página de prueba ESC/POS directamente a una IP:9100
+   * sin registrar la impresora en CUPS.
+   */
+  async printTestTcp(ip: string, size: 'thermal_58mm' | 'thermal_80mm'): Promise<string> {
+    return invoke<string>('print_test_tcp', { ip, size });
   }
 
   async getAutostartEnabled(): Promise<boolean> {
@@ -134,5 +142,24 @@ export class TauriService {
 
   async addNetworkPrinter(ip: string, name: string): Promise<string> {
     return invoke<string>('add_network_printer', { ip, name });
+  }
+
+  async clearPrintQueue(printerName: string): Promise<string> {
+    return invoke<string>('clear_print_queue', { printerName });
+  }
+
+  /**
+   * Imprime un ticket con título, texto e imagen rasterizada en impresora térmica.
+   * La imagen se convierte a bitmap 1bpp (Floyd-Steinberg) y se envía por ESC/POS GS v 0.
+   * @param imageB64 Imagen PNG o JPEG codificada en base64 (vacío = sin imagen)
+   */
+  async printImageTicket(
+    printerName: string,
+    title: string,
+    bodyLines: string[],
+    imageB64: string,
+    size: 'thermal_58mm' | 'thermal_80mm',
+  ): Promise<string> {
+    return invoke<string>('print_image_ticket', { printerName, title, bodyLines, imageB64, size });
   }
 }

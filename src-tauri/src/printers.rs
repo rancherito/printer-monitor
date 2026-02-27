@@ -517,52 +517,170 @@ pub fn add_network_printer(ip: String, name: String) -> Result<String, String> {
     }
 }
 
-/// Genera un PDF de prueba y lo envía a la impresora indicada.
-#[tauri::command]
-pub fn print_test(printer_name: String, size: String) -> Result<String, String> {
-    use std::io::Write;
-    use std::process::Command;
+/// Logo de la app embebido en el binario en tiempo de compilación.
+const APP_LOGO: &[u8] = include_bytes!("../icons/icon.png");
 
-    let (page_width, page_height, label) = match size.as_str() {
-        "thermal_50mm" => (142u32, 200u32, "Térmica 50mm"),
-        "thermal_80mm" => (227u32, 200u32, "Térmica 80mm"),
-        _ => (595u32, 842u32, "A4"),
+/// Pre-procesa una imagen para impresión térmica 1bpp.
+///
+/// Pasos:
+///   1. Decodifica los bytes (PNG o JPEG).
+///   2. Redimensiona a `max_width` px preservando proporción (Lanczos3).
+///   3. Convierte a escala de grises (luma8).
+///   4. Aplica dithering Floyd-Steinberg: cada píxel queda en 0 (negro) ó 255 (blanco).
+///   5. Codifica el resultado como PNG y lo devuelve.
+///
+/// El crate `escpos` usa umbral fijo `luma <= 128 → negro`. Al pasarle
+/// solo 0/255 el umbral es irrelevante y se conserva todo el detalle.
+fn dither_image_bytes(img_bytes: &[u8], max_width: u32) -> Result<Vec<u8>, String> {
+    use image::{GrayImage, DynamicImage, RgbImage};
+
+    let img = image::load_from_memory(img_bytes)
+        .map_err(|e| format!("Error cargando imagen: {e}"))?;
+
+    // Redimensionar preservando proporción
+    let orig_w = img.width().max(1);
+    let orig_h = img.height().max(1);
+    let (target_w, target_h) = if orig_w > max_width {
+        let h = ((orig_h as f64 * max_width as f64) / orig_w as f64) as u32;
+        (max_width, h.max(1))
+    } else {
+        (orig_w, orig_h)
     };
 
-    let title = format!("Página de prueba — {}", label);
-    let body_lines = vec![
-        "Printer Monitor — Prueba de impresión".to_string(),
-        format!("Impresora: {}", printer_name),
-        format!("Formato:   {}", label),
-        format!("Fecha:     {}", chrono::Local::now().format("%d/%m/%Y %H:%M:%S")),
-        String::new(),
-        "Si ves este texto, la impresora".to_string(),
-        "funciona correctamente.".to_string(),
-    ];
+    let resized = img.resize_exact(target_w, target_h, image::imageops::FilterType::Lanczos3);
 
-    let pdf_bytes = build_test_pdf(page_width, page_height, &title, &body_lines);
-    let tmp_path = std::env::temp_dir()
-        .join(format!("pm_test_{}.pdf", printer_name.replace(' ', "_")));
-
-    {
-        let mut f = std::fs::File::create(&tmp_path)
-            .map_err(|e| format!("No se pudo crear archivo temporal: {e}"))?;
-        f.write_all(&pdf_bytes)
-            .map_err(|e| format!("No se pudo escribir PDF: {e}"))?;
+    // Componer sobre fondo blanco ANTES de convertir a grises.
+    // to_luma8() ignora el canal alpha → píxeles transparentes quedan en negro (luma=0).
+    // Con la composición: pixel_final = pixel * alpha + blanco * (1 - alpha)
+    // → transparencia total = blanco, semitransparente = tono claro.
+    let rgba = resized.to_rgba8();
+    let mut rgb_white = RgbImage::new(target_w, target_h);
+    for (x, y, p) in rgba.enumerate_pixels() {
+        let a = p.0[3] as u32;
+        let ia = 255 - a;
+        rgb_white.put_pixel(x, y, image::Rgb([
+            ((p.0[0] as u32 * a + ia * 255) / 255) as u8,
+            ((p.0[1] as u32 * a + ia * 255) / 255) as u8,
+            ((p.0[2] as u32 * a + ia * 255) / 255) as u8,
+        ]));
     }
+
+    let gray = DynamicImage::from(rgb_white).to_luma8();
+
+    let w = target_w as usize;
+    let h = target_h as usize;
+    let mut pixels: Vec<f32> = gray.pixels().map(|p| p.0[0] as f32).collect();
+
+    // Floyd-Steinberg dithering
+    for y in 0..h {
+        for x in 0..w {
+            let idx = y * w + x;
+            let old = pixels[idx];
+            let new_val = if old < 128.0 { 0.0_f32 } else { 255.0 };
+            let err = old - new_val;
+            pixels[idx] = new_val;
+
+            if x + 1 < w {
+                pixels[idx + 1] = (pixels[idx + 1] + err * 7.0 / 16.0).clamp(0.0, 255.0);
+            }
+            if y + 1 < h {
+                if x > 0 {
+                    pixels[(y + 1) * w + x - 1] =
+                        (pixels[(y + 1) * w + x - 1] + err * 3.0 / 16.0).clamp(0.0, 255.0);
+                }
+                pixels[(y + 1) * w + x] =
+                    (pixels[(y + 1) * w + x] + err * 5.0 / 16.0).clamp(0.0, 255.0);
+                if x + 1 < w {
+                    pixels[(y + 1) * w + x + 1] =
+                        (pixels[(y + 1) * w + x + 1] + err * 1.0 / 16.0).clamp(0.0, 255.0);
+                }
+            }
+        }
+    }
+
+    let raw: Vec<u8> = pixels.iter().map(|&v| v as u8).collect();
+    let dithered = GrayImage::from_vec(target_w, target_h, raw)
+        .ok_or_else(|| "Error creando buffer dithered".to_string())?;
+
+    let mut png_bytes: Vec<u8> = Vec::new();
+    DynamicImage::from(dithered)
+        .write_to(
+            &mut std::io::Cursor::new(&mut png_bytes),
+            image::ImageFormat::Png,
+        )
+        .map_err(|e| format!("Error codificando PNG dithered: {e}"))?;
+
+    Ok(png_bytes)
+}
+
+/// El logo se pre-procesa con dithering Floyd-Steinberg para preservar todos los
+/// tonos intermedios (el crate escpos usa umbral fijo sin dithering).
+#[tauri::command]
+pub fn print_test(printer_name: String, size: String) -> Result<String, String> {
+    use escpos::{driver::NetworkDriver, printer::Printer, utils::*};
+    use std::time::Duration;
+
+    let print_width_px: u32 = match size.as_str() {
+        "thermal_80mm" => 576,
+        _ => 384,
+    };
+
+    let logo_dithered = dither_image_bytes(APP_LOGO, print_width_px / 2)?;
+    let (ip, port) = resolve_printer_address(&printer_name)?;
+
+    (|| -> escpos::errors::Result<()> {
+        let driver = NetworkDriver::open(&ip, port, Some(Duration::from_secs(5)))?;
+        let mut p = Printer::new(driver, Protocol::default(), None);
+        p.init()?
+            .justify(JustifyMode::CENTER)?
+            .bit_image_from_bytes_option(
+                &logo_dithered,
+                BitImageOption::new(Some(print_width_px / 2), None, BitImageSize::Normal)?,
+            )?
+            .writeln("")?
+            .bold(true)?
+            .writeln("Printer Monitor")?
+            .bold(false)?
+            .justify(JustifyMode::LEFT)?
+            .writeln(&format!("Impresora: {}", printer_name))?
+            .writeln(&format!("Fecha: {}", chrono::Local::now().format("%d/%m/%Y %H:%M")))?
+            .writeln("")?
+            .writeln("Si ves esto, funciona!")?
+            .feeds(4)?
+            .print_cut()?;
+        Ok(())
+    })()
+    .map_err(|e| format!("Error de impresión: {e}"))?;
+
+    Ok(format!("Prueba enviada a \u{ab}{}\u{bb}", printer_name))
+}
+
+/// Cancela todos los trabajos pendientes de la cola de una impresora.
+///
+/// macOS/Linux: `cancel -a <queue_name>`
+/// Windows: `Get-PrintJob | Remove-PrintJob` vía PowerShell
+#[tauri::command]
+pub fn clear_print_queue(printer_name: String) -> Result<String, String> {
+    use std::process::Command;
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        let output = Command::new("lp")
-            .args(["-d", &printer_name, tmp_path.to_str().unwrap_or("")])
+        let output = Command::new("cancel")
+            .args(["-a", &printer_name])
             .output()
-            .map_err(|e| format!("Error al ejecutar lp: {e}"))?;
-        let _ = std::fs::remove_file(&tmp_path);
+            .map_err(|e| format!("No se pudo ejecutar cancel: {e}"))?;
+
+        let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+
+        // `cancel` devuelve exit 1 con "no jobs for X" cuando la cola ya está vacía;
+        // eso no es un error real.
         if output.status.success() {
-            Ok(format!("Trabajo enviado a «{}» ({})", printer_name, label))
+            Ok(format!("Cola de «{}» vaciada", printer_name))
+        } else if stderr.contains("no jobs") || stderr.is_empty() {
+            Ok(format!("La cola de «{}» ya estaba vacía", printer_name))
         } else {
             Err(format!(
-                "Error de impresión: {}",
+                "Error al limpiar cola: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             ))
         }
@@ -570,25 +688,170 @@ pub fn print_test(printer_name: String, size: String) -> Result<String, String> 
 
     #[cfg(target_os = "windows")]
     {
-        let output = crate::hidden_cmd("cmd")
+        let script = format!(
+            "Get-PrintJob -PrinterName '{}' -EA SilentlyContinue | Remove-PrintJob -EA SilentlyContinue",
+            printer_name.replace('\'', "''")
+        );
+        let output = crate::hidden_cmd("powershell")
             .args([
-                "/C",
-                "print",
-                &format!("/D:{}", printer_name),
-                tmp_path.to_str().unwrap_or(""),
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                &script,
             ])
             .output()
-            .map_err(|e| format!("Error al ejecutar print: {e}"))?;
-        let _ = std::fs::remove_file(&tmp_path);
+            .map_err(|e| format!("No se pudo ejecutar PowerShell: {e}"))?;
+
         if output.status.success() {
-            Ok(format!("Trabajo enviado a «{}» ({})", printer_name, label))
+            Ok(format!("Cola de «{}» vaciada", printer_name))
         } else {
-            Err(format!(
-                "Error de impresión: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ))
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.trim().is_empty() {
+                Ok(format!("La cola de «{}» ya estaba vacía", printer_name))
+            } else {
+                Err(format!("Error al limpiar cola: {}", stderr.trim()))
+            }
         }
     }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    Err("Sistema operativo no soportado".to_string())
+}
+
+// ─── Impresión de tickets ────────────────────────────────────────────────────
+
+/// Imprime un ticket con imagen, título y texto usando `escpos::NetworkDriver`.
+///
+/// - `image_b64` : PNG o JPEG en base64 (vacío = sin imagen).
+/// - `size`      : `"thermal_50mm"` (384 px) | `"thermal_80mm"` (576 px).
+#[tauri::command]
+pub fn print_image_ticket(
+    printer_name: String,
+    title: String,
+    body_lines: Vec<String>,
+    image_b64: String,
+    size: String,
+) -> Result<String, String> {
+    use escpos::{driver::NetworkDriver, printer::Printer, utils::*};
+    use std::time::Duration;
+
+    let print_width_px: u32 = match size.as_str() {
+        "thermal_80mm" => 576,
+        _ => 384,
+    };
+
+    let image_bytes: Option<Vec<u8>> = if !image_b64.is_empty() {
+        use base64::Engine as _;
+        Some(
+            base64::engine::general_purpose::STANDARD
+                .decode(image_b64.trim())
+                .map_err(|e| format!("Error decodificando imagen base64: {e}"))?,
+        )
+    } else {
+        None
+    };
+
+    let (ip, port) = resolve_printer_address(&printer_name)?;
+
+    (|| -> escpos::errors::Result<()> {
+        let driver = NetworkDriver::open(&ip, port, Some(Duration::from_secs(5)))?;
+        let mut p = Printer::new(driver, Protocol::default(), None);
+        p.init()?;
+
+        if let Some(ref img) = image_bytes {
+            // Pre-procesar con dithering para evitar el umbral simple del crate
+            let img_dithered = dither_image_bytes(img, print_width_px)
+                .map_err(|e| escpos::errors::PrinterError::Input(e))?;
+            p.justify(JustifyMode::CENTER)?
+                .bit_image_from_bytes_option(
+                    &img_dithered,
+                    BitImageOption::new(Some(print_width_px), None, BitImageSize::Normal)?,
+                )?
+                .writeln("")?
+                .justify(JustifyMode::LEFT)?;
+        }
+
+        if !title.is_empty() {
+            p.justify(JustifyMode::CENTER)?
+                .bold(true)?
+                .writeln(&title)?
+                .bold(false)?
+                .justify(JustifyMode::LEFT)?;
+        }
+
+        for line in &body_lines {
+            p.writeln(line)?;
+        }
+
+        p.feeds(4)?.print_cut()?;
+        Ok(())
+    })()
+    .map_err(|e| format!("Error de impresión: {e}"))?;
+
+    Ok(format!("Enviado a \u{ab}{}\u{bb}", printer_name))
+}
+
+/// Resuelve la dirección TCP (host, puerto) de una impresora de red.
+///
+/// macOS/Linux: parsea el URI de `lpstat -v` buscando `socket://`.
+/// Windows: consulta `PrinterHostAddress` del puerto vía PowerShell.
+fn resolve_printer_address(printer_name: &str) -> Result<(String, u16), String> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        use std::process::Command;
+        let out = Command::new("lpstat")
+            .args(["-v", printer_name])
+            .output()
+            .map_err(|e| format!("No se pudo ejecutar lpstat: {e}"))?;
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        let line = text
+            .lines()
+            .find(|l| l.to_lowercase().contains("socket://"))
+            .ok_or_else(|| format!(
+                "No se encontró dirección socket para \u{ab}{printer_name}\u{bb}.\n\
+                 Asegúrate de que la impresora usa protocolo Socket/TCP en CUPS."
+            ))?;
+        let uri = line
+            .split_whitespace()
+            .find(|t| t.to_lowercase().starts_with("socket://"))
+            .unwrap_or("");
+        let raw = uri
+            .trim_start_matches("socket://")
+            .trim_end_matches('/')
+            .trim_end_matches('\\');
+        if let Some((host, port_str)) = raw.split_once(':') {
+            Ok((host.to_string(), port_str.parse().unwrap_or(9100)))
+        } else {
+            Ok((raw.to_string(), 9100))
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let out = crate::hidden_cmd("powershell")
+            .args([
+                "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+                "-Command",
+                &format!(
+                    "(Get-PrinterPort -Name (Get-Printer -Name '{}' -EA SilentlyContinue)\
+                     .PortName -EA SilentlyContinue).PrinterHostAddress",
+                    printer_name.replace('\'', "''")
+                ),
+            ])
+            .output()
+            .map_err(|e| format!("No se pudo ejecutar PowerShell: {e}"))?;
+        let host = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if host.is_empty() || host.to_lowercase().contains("null") {
+            Err(format!("No se encontró la IP de \u{ab}{printer_name}\u{bb}."))
+        } else {
+            Ok((host, 9100))
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    Err("Sistema operativo no soportado".to_string())
 }
 
 // ─── ESC/POS directo a USB ───────────────────────────────────────────────────
@@ -604,11 +867,53 @@ pub fn print_test(printer_name: String, size: String) -> Result<String, String> 
 pub fn print_test_usb(port_name: String, size: String) -> Result<String, String> {
     let (chars_per_line, label) = match size.as_str() {
         "thermal_80mm" => (48usize, "Termica 80mm"),
-        _ => (32usize, "Termica 50mm"),
+        _ => (32usize, "Termica 58mm"),
     };
 
     let data = build_escpos_test(&port_name, chars_per_line, label);
     write_to_serial_port(&port_name, &data)
+}
+
+/// Envía una página de prueba ESC/POS directamente a una IP:9100
+/// **sin** registrar la impresora en CUPS. Útil para impresoras encontradas
+/// en el escaneo TCP/IP que aún no están instaladas en el sistema.
+#[tauri::command]
+pub fn print_test_tcp(ip: String, size: String) -> Result<String, String> {
+    use escpos::{driver::NetworkDriver, printer::Printer, utils::*};
+    use std::time::Duration;
+
+    let print_width_px: u32 = match size.as_str() {
+        "thermal_80mm" => 576,
+        _ => 384, // thermal_58mm
+    };
+
+    let logo_dithered = dither_image_bytes(APP_LOGO, print_width_px / 2)?;
+
+    (|| -> escpos::errors::Result<()> {
+        let driver = NetworkDriver::open(&ip, 9100, Some(Duration::from_secs(5)))?;
+        let mut p = Printer::new(driver, Protocol::default(), None);
+        p.init()?
+            .justify(JustifyMode::CENTER)?
+            .bit_image_from_bytes_option(
+                &logo_dithered,
+                BitImageOption::new(Some(print_width_px / 2), None, BitImageSize::Normal)?,
+            )?
+            .writeln("")?
+            .bold(true)?
+            .writeln("Printer Monitor")?
+            .bold(false)?
+            .justify(JustifyMode::LEFT)?
+            .writeln(&format!("IP: {}", ip))?
+            .writeln(&format!("Fecha: {}", chrono::Local::now().format("%d/%m/%Y %H:%M")))?
+            .writeln("")?
+            .writeln("Si ves esto, funciona!")?
+            .feeds(4)?
+            .print_cut()?;
+        Ok(())
+    })()
+    .map_err(|e| format!("Error de impresion: {e}"))?;
+
+    Ok(format!("Prueba enviada a {}:9100", ip))
 }
 
 /// Construye el payload ESC/POS de la página de prueba.
@@ -712,90 +1017,4 @@ fn write_to_serial_port(port_name: &str, data: &[u8]) -> Result<String, String> 
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     Err("Sistema operativo no soportado".to_string())
-}
-
-// ─── Helpers PDF ─────────────────────────────────────────────────────────────
-
-fn build_test_pdf(width: u32, height: u32, title: &str, lines: &[String]) -> Vec<u8> {
-    let mut objects: Vec<String> = Vec::new();
-    objects.push("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj".to_string());
-    objects.push("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj".to_string());
-
-    let font_size_title = if width < 200 { 9 } else { 14 };
-    let font_size_body = if width < 200 { 7 } else { 11 };
-    let margin = if width < 200 { 8.0f32 } else { 50.0 };
-    let line_height = (font_size_body as f32) * 1.6;
-    let start_y = (height as f32) - margin - (font_size_title as f32) - 10.0;
-
-    let mut stream = String::new();
-    stream.push_str("BT\n");
-    stream.push_str(&format!("/F1 {} Tf\n", font_size_title));
-    stream.push_str(&format!("{} {} Td\n", margin, start_y));
-    stream.push_str(&format!("({}) Tj\n", escape_pdf_string(title)));
-    let sep_count =
-        ((width as f32 - margin * 2.0) / (font_size_body as f32 * 0.5)) as usize;
-    let separator = "-".repeat(sep_count.min(60));
-    stream.push_str(&format!("/F1 {} Tf\n", font_size_body));
-    stream.push_str(&format!("0 -{} Td\n", line_height * 1.2));
-    stream.push_str(&format!("({}) Tj\n", separator));
-    for line in lines {
-        stream.push_str(&format!("0 -{} Td\n", line_height));
-        stream.push_str(&format!("({}) Tj\n", escape_pdf_string(line)));
-    }
-    stream.push_str("ET\n");
-
-    let stream_bytes = stream.as_bytes().len();
-    objects.push(format!(
-        "4 0 obj\n<< /Length {} >>\nstream\n{}endstream\nendobj",
-        stream_bytes, stream
-    ));
-    objects.push(
-        "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj"
-            .to_string(),
-    );
-    objects.insert(
-        2,
-        format!(
-            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj",
-            width, height
-        ),
-    );
-
-    let mut pdf = Vec::new();
-    pdf.extend_from_slice(b"%PDF-1.4\n");
-    let mut offsets: Vec<usize> = Vec::new();
-    for obj in &objects {
-        offsets.push(pdf.len());
-        pdf.extend_from_slice(obj.as_bytes());
-        pdf.push(b'\n');
-    }
-
-    let xref_offset = pdf.len();
-    let xref_count = objects.len() + 1;
-    let mut xref = format!("xref\n0 {}\n", xref_count);
-    xref.push_str("0000000000 65535 f \n");
-    for &off in &offsets {
-        xref.push_str(&format!("{:010} 00000 n \n", off));
-    }
-    pdf.extend_from_slice(xref.as_bytes());
-    pdf.extend_from_slice(
-        format!(
-            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
-            xref_count, xref_offset
-        )
-        .as_bytes(),
-    );
-    pdf
-}
-
-fn escape_pdf_string(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            '(' => r"\(".to_string(),
-            ')' => r"\)".to_string(),
-            '\\' => r"\\".to_string(),
-            c if c.is_ascii() => c.to_string(),
-            _ => "?".to_string(),
-        })
-        .collect()
 }

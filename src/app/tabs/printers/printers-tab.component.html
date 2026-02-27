@@ -1,116 +1,22 @@
 <div class="flex flex-col gap-5 max-w-2xl">
 
-  @if (printResult()) {
+  @if (printers.printResult()) {
     <div class="flex items-start gap-2 p-3 rounded-lg text-sm border"
-         [class.bg-green-50]="printResult()!.ok" [class.border-green-200]="printResult()!.ok" [class.text-green-700]="printResult()!.ok"
-         [class.bg-red-50]="!printResult()!.ok" [class.border-red-200]="!printResult()!.ok" [class.text-red-600]="!printResult()!.ok"
+         [class.bg-green-50]="printers.printResult()!.ok" [class.border-green-200]="printers.printResult()!.ok" [class.text-green-700]="printers.printResult()!.ok"
+         [class.bg-red-50]="!printers.printResult()!.ok" [class.border-red-200]="!printers.printResult()!.ok" [class.text-red-600]="!printers.printResult()!.ok"
          role="status">
-      <ng-icon [name]="printResult()!.ok ? 'matCheck' : 'matClose'" size="16" class="shrink-0 mt-px"></ng-icon>
-      {{ printResult()!.message }}
+      <ng-icon [name]="printers.printResult()!.ok ? 'matCheck' : 'matClose'" size="16" class="shrink-0 mt-px"></ng-icon>
+      {{ printers.printResult()!.message }}
     </div>
   }
-
-  <!-- Configuración de red del equipo -->
-  <section aria-labelledby="network-config-title">
-    <h2 class="section-title" id="network-config-title">
-      Configuración de red del equipo
-      @if (!loadingNetworkConfig() && !networkConfig()) {
-        <button appBtn variant="ghost" size="sm" (click)="loadNetworkConfigClick.emit()" class="ml-auto">
-          <ng-icon name="matRefresh" size="14"></ng-icon>
-          Cargar
-        </button>
-      }
-    </h2>
-
-    @if (loadingNetworkConfig()) {
-      <app-card padding="md" class="flex items-center gap-3 text-sm text-slate-500">
-        <span class="w-4 h-4 border-2 border-blue-500 border-r-transparent rounded-full animate-spin shrink-0"></span>
-        Obteniendo configuración de red...
-      </app-card>
-    } @else if (networkConfig()) {
-      <app-card padding="md" class="flex flex-col gap-4">
-        @if (networkConfigResult()) {
-          <div class="flex items-start gap-2 p-2 rounded-md text-xs border"
-               [class.bg-green-50]="networkConfigResult()!.ok" [class.border-green-200]="networkConfigResult()!.ok" [class.text-green-700]="networkConfigResult()!.ok"
-               [class.bg-red-50]="!networkConfigResult()!.ok" [class.border-red-200]="!networkConfigResult()!.ok" [class.text-red-600]="!networkConfigResult()!.ok">
-            <ng-icon [name]="networkConfigResult()!.ok ? 'matCheck' : 'matClose'" size="14" class="shrink-0"></ng-icon>
-            {{ networkConfigResult()!.message }}
-          </div>
-        }
-
-        @if (editingNetworkConfig()) {
-          <div class="flex flex-col gap-3">
-            <div class="flex flex-col gap-1.5">
-              <label class="label-xs">Dirección IP</label>
-              <app-ip-input [value]="tempIp()" (valueChange)="tempIpChange.emit($event)" />
-            </div>
-            <div class="flex flex-col gap-1.5">
-              <label class="label-xs">Máscara de subred</label>
-              <app-ip-input [value]="tempMask()" (valueChange)="tempMaskChange.emit($event)" />
-            </div>
-            <div class="flex flex-col gap-1.5">
-              <label class="label-xs">Gateway</label>
-              <app-ip-input [value]="tempGateway()" (valueChange)="tempGatewayChange.emit($event)" />
-            </div>
-          </div>
-          <div class="flex flex-wrap gap-2">
-            <button appBtn variant="primary" size="sm" (click)="saveNetworkConfigClick.emit()" [disabled]="savingNetworkConfig()">
-              @if (savingNetworkConfig()) {
-                <span class="w-3 h-3 border-2 border-white border-r-transparent rounded-full animate-spin"></span>
-              } @else {
-                <ng-icon name="matCheck" size="14"></ng-icon>
-              }
-              Guardar cambios
-            </button>
-            <button appBtn variant="ghost" size="sm" (click)="cancelEditNetworkConfigClick.emit()">
-              <ng-icon name="matClose" size="14"></ng-icon>
-              Cancelar
-            </button>
-          </div>
-        } @else {
-          <div class="flex flex-col gap-3">
-            <div>
-              <p class="label-xs">Dirección IP</p>
-              <p class="value-lg">{{ networkConfig()!.ip }}</p>
-            </div>
-            <div>
-              <p class="label-xs">Máscara de subred</p>
-              <p class="value-lg">{{ networkConfig()!.mask }}</p>
-            </div>
-            <div>
-              <p class="label-xs">Gateway</p>
-              <p class="value-lg">{{ networkConfig()!.gateway }}</p>
-            </div>
-            <div class="text-xs text-slate-400 flex items-center">
-              Interfaz: <span class="font-mono ml-1">{{ networkConfig()!.interface }}</span>
-            </div>
-          </div>
-          <div class="flex gap-2">
-            <button appBtn variant="secondary" size="sm" (click)="startEditNetworkConfigClick.emit()">
-              <ng-icon name="matEdit" size="14"></ng-icon>
-              Editar configuración
-            </button>
-            <button appBtn variant="ghost" size="sm" (click)="restoreNetworkDhcpClick.emit()">
-              <ng-icon name="matRefresh" size="14"></ng-icon>
-              Restaurar DHCP
-            </button>
-          </div>
-        }
-      </app-card>
-    } @else {
-      <app-card padding="md">
-        <p class="text-sm text-slate-400">Pulsa "Cargar" para ver la configuración de red.</p>
-      </app-card>
-    }
-  </section>
 
   <section aria-labelledby="printers-title">
     <h2 class="section-title" id="printers-title">
       Impresoras instaladas
-      @if (!loading()) { <span class="badge">{{ printers().length }}</span> }
+      @if (!printers.loading()) { <span class="badge">{{ printers.printers().length }}</span> }
     </h2>
 
-    @if (loading()) {
+    @if (printers.loading()) {
       <div class="flex flex-col gap-2.5" aria-busy="true">
         @for (_ of [1,2,3]; track $index) {
           <app-card padding="md" class="flex flex-col gap-3">
@@ -123,39 +29,39 @@
           </app-card>
         }
       </div>
-    } @else if (printers().length === 0) {
+    } @else if (printers.printers().length === 0) {
       <app-card padding="lg" class="flex flex-col items-center gap-3 text-center">
         <ng-icon name="matPrint" size="40" class="text-slate-300"></ng-icon>
         <p class="text-sm text-slate-500">No se encontraron impresoras instaladas.</p>
       </app-card>
     } @else {
       <ul class="flex flex-col gap-2.5">
-        @for (printer of printers(); track printer.queue_name) {
+        @for (printer of printers.printers(); track printer.queue_name) {
           <li>
             <app-card padding="md" class="flex flex-col gap-3">
               <div class="flex items-center justify-between gap-3">
                 <div class="flex items-center gap-2 flex-wrap min-w-0">
-                  @if (renamingPrinter() === printer.queue_name) {
+                  @if (printers.renamingPrinter() === printer.queue_name) {
                     <input class="h-7 px-2 rounded-md border border-blue-300 text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 w-52"
-                           type="text" [value]="renameValue()"
-                           (input)="renameValueChange.emit($any($event.target).value)"
-                           (keydown.enter)="confirmRenameClick.emit(printer)"
-                           (keydown.escape)="cancelRenameClick.emit()"
+                           type="text" [value]="printers.renameValue()"
+                           (input)="printers.renameValue.set($any($event.target).value)"
+                           (keydown.enter)="printers.confirmRename(printer)"
+                           (keydown.escape)="printers.cancelRename()"
                            aria-label="Nuevo nombre" autofocus />
-                    <button appBtn variant="primary" size="sm" (click)="confirmRenameClick.emit(printer)" [disabled]="renamingFor() === printer.queue_name">
-                      @if (renamingFor() === printer.queue_name) {
+                    <button appBtn variant="primary" size="sm" (click)="printers.confirmRename(printer)" [disabled]="printers.renamingFor() === printer.queue_name">
+                      @if (printers.renamingFor() === printer.queue_name) {
                         <span class="w-3 h-3 border-2 border-white border-r-transparent rounded-full animate-spin"></span>
                       } @else {
                         <ng-icon name="matCheck" size="14"></ng-icon>
                       }
                     </button>
-                    <button appBtn variant="ghost" size="sm" (click)="cancelRenameClick.emit()">
+                    <button appBtn variant="ghost" size="sm" (click)="printers.cancelRename()">
                       <ng-icon name="matClose" size="14"></ng-icon>
                     </button>
                   } @else {
                     <span class="font-semibold text-[15px] text-slate-900 truncate max-w-72">{{ printer.name }}</span>
                     @if (printer.is_default) { <span class="badge-blue">Predeterminada</span> }
-                    <button appBtn variant="ghost" size="sm" (click)="startRenameClick.emit(printer)" [attr.aria-label]="'Renombrar ' + printer.name">
+                    <button appBtn variant="ghost" size="sm" (click)="printers.startRename(printer)" [attr.aria-label]="'Renombrar ' + printer.name">
                       <ng-icon name="matEdit" size="14"></ng-icon>
                     </button>
                   }
@@ -168,22 +74,22 @@
                 </div>
               </div>
 
-              @if (renameResult()?.printerName === printer.name) {
+              @if (printers.renameResult()?.printerName === printer.name) {
                 <p class="text-xs flex items-center gap-1"
-                   [class.text-green-600]="renameResult()!.ok"
-                   [class.text-red-600]="!renameResult()!.ok" role="status">
-                  <ng-icon [name]="renameResult()!.ok ? 'matCheck' : 'matClose'" size="12"></ng-icon>
-                  {{ renameResult()!.message }}
+                   [class.text-green-600]="printers.renameResult()!.ok"
+                   [class.text-red-600]="!printers.renameResult()!.ok" role="status">
+                  <ng-icon [name]="printers.renameResult()!.ok ? 'matCheck' : 'matClose'" size="12"></ng-icon>
+                  {{ printers.renameResult()!.message }}
                 </p>
               }
 
               <div class="flex gap-2 flex-wrap" [attr.aria-label]="'Prueba de impresión: ' + printer.name">
                 @for (sz of printSizes; track sz.key) {
                   <button appBtn variant="secondary" size="sm"
-                          (click)="printTestClick.emit({ printer, size: sz.key })"
-                          [disabled]="printingFor() !== null"
-                          [attr.aria-busy]="isPrinting(printer, sz.key)">
-                    @if (isPrinting(printer, sz.key)) {
+                          (click)="printers.printTest(printer, sz.key)"
+                          [disabled]="printers.printingFor() !== null || printers.clearingFor() === printer.queue_name"
+                          [attr.aria-busy]="printers.isPrinting(printer, sz.key)">
+                    @if (printers.isPrinting(printer, sz.key)) {
                       <span class="w-3 h-3 border-2 border-current border-r-transparent rounded-full animate-spin"></span>
                     } @else {
                       <ng-icon name="matPrint" size="13"></ng-icon>
@@ -191,6 +97,19 @@
                     {{ sz.label }}
                   </button>
                 }
+                <button appBtn variant="ghost" size="sm"
+                        (click)="printers.clearQueue(printer)"
+                        [disabled]="printers.clearingFor() !== null || printers.printingFor() !== null"
+                        [attr.aria-busy]="printers.clearingFor() === printer.queue_name"
+                        [attr.aria-label]="'Limpiar cola de ' + printer.name"
+                        title="Cancelar todos los trabajos pendientes">
+                  @if (printers.clearingFor() === printer.queue_name) {
+                    <span class="w-3 h-3 border-2 border-current border-r-transparent rounded-full animate-spin"></span>
+                  } @else {
+                    <ng-icon name="matLayersClear" size="13"></ng-icon>
+                  }
+                  Limpiar cola
+                </button>
               </div>
             </app-card>
           </li>
@@ -204,14 +123,14 @@
     <h2 class="section-title" id="tcp-scan-title">Escáner de impresoras TCP/IP</h2>
     <app-card padding="md" class="flex flex-col gap-4">
       <p class="text-xs text-slate-400">
-        El escaneo se hará usando la IP actual del equipo 
-        @if (networkConfig()) {
-          (<span class="font-mono">{{ networkConfig()!.ip }}</span>)
+        El escaneo se hará usando la IP actual del equipo
+        @if (network.networkConfig()) {
+          (<span class="font-mono">{{ network.networkConfig()!.ip }}</span>)
         }
       </p>
       <div class="flex items-center justify-end">
-        <button appBtn variant="primary" size="sm" (click)="scanTcpIpPrintersClick.emit()" [disabled]="scanningPrinters()">
-          @if (scanningPrinters()) {
+        <button appBtn variant="primary" size="sm" (click)="printers.scanTcpIpPrinters()" [disabled]="printers.scanningPrinters()">
+          @if (printers.scanningPrinters()) {
             <span class="w-3 h-3 border-2 border-white border-r-transparent rounded-full animate-spin"></span>
             Escaneando...
           } @else {
@@ -222,24 +141,55 @@
       </div>
     </app-card>
 
-    @if (scanningPrinters()) {
+    @if (printers.scanningPrinters()) {
       <app-card padding="md" class="flex items-center gap-3 text-sm text-slate-500">
         <span class="w-4 h-4 border-2 border-blue-500 border-r-transparent rounded-full animate-spin shrink-0"></span>
         Escaneando el rango de red en puerto 9100...
       </app-card>
-    } @else if (foundPrinters().length > 0) {
+    } @else if (printers.foundPrinters().length > 0) {
+      @if (printers.tcpPrintResult()) {
+        <div class="flex items-start gap-2 p-3 mb-2 rounded-lg text-xs border"
+             [class.bg-green-50]="printers.tcpPrintResult()!.ok" [class.border-green-200]="printers.tcpPrintResult()!.ok" [class.text-green-700]="printers.tcpPrintResult()!.ok"
+             [class.bg-red-50]="!printers.tcpPrintResult()!.ok" [class.border-red-200]="!printers.tcpPrintResult()!.ok" [class.text-red-600]="!printers.tcpPrintResult()!.ok"
+             role="status">
+          <ng-icon [name]="printers.tcpPrintResult()!.ok ? 'matCheck' : 'matClose'" size="14" class="shrink-0 mt-px"></ng-icon>
+          {{ printers.tcpPrintResult()!.message }}
+        </div>
+      }
       <div class="flex flex-col gap-1.5">
-        @for (ip of foundPrinters(); track ip) {
+        @for (ip of printers.foundPrinters(); track ip) {
           <app-card padding="sm">
-            <div class="flex items-center justify-between px-1">
+            <div class="flex items-center justify-between gap-2 px-1 flex-wrap">
               <div class="flex items-center gap-2">
                 <ng-icon name="matPrint" size="16" class="text-blue-500"></ng-icon>
                 <span class="font-mono text-sm font-medium text-slate-900">{{ ip }}</span>
                 <span class="text-xs text-slate-400">Puerto 9100</span>
               </div>
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <button appBtn variant="ghost" size="sm"
+                        [disabled]="printers.isTcpPrinting(ip, 'thermal_58mm') || printers.isTcpPrinting(ip, 'thermal_80mm')"
+                        [attr.aria-label]="'Prueba 58mm en ' + ip"
+                        (click)="printers.printTestTcp(ip, 'thermal_58mm')">
+                  @if (printers.isTcpPrinting(ip, 'thermal_58mm')) {
+                    <span class="w-3 h-3 border-2 border-current border-r-transparent rounded-full animate-spin"></span>
+                  } @else {
+                    <ng-icon name="matPrint" size="13"></ng-icon>
+                  }
+                  58mm
+                </button>
+                <button appBtn variant="ghost" size="sm"
+                        [disabled]="printers.isTcpPrinting(ip, 'thermal_58mm') || printers.isTcpPrinting(ip, 'thermal_80mm')"
+                        [attr.aria-label]="'Prueba 80mm en ' + ip"
+                        (click)="printers.printTestTcp(ip, 'thermal_80mm')">
+                  @if (printers.isTcpPrinting(ip, 'thermal_80mm')) {
+                    <span class="w-3 h-3 border-2 border-current border-r-transparent rounded-full animate-spin"></span>
+                  } @else {
+                    <ng-icon name="matPrint" size="13"></ng-icon>
+                  }
+                  80mm
+                </button>
                 <span class="badge-green">En línea</span>
-                <button appBtn variant="primary" size="sm" (click)="openAddPrinterDialogClick.emit(ip)">
+                <button appBtn variant="primary" size="sm" (click)="printers.openAddPrinterDialog(ip)">
                   <ng-icon name="matAdd" size="14"></ng-icon>
                   Agregar
                 </button>
@@ -254,16 +204,16 @@
 
 <!-- Diálogo nativo para agregar impresora -->
 <dialog #addPrinterDialog class="rounded-lg p-0 backdrop:bg-black/50 border-0 shadow-xl max-w-md w-full">
-  @if (addingPrinter()) {
+  @if (printers.addingPrinter()) {
     <div class="flex flex-col">
       <div class="flex items-center justify-between p-4 border-b border-slate-200">
         <h3 class="font-semibold text-lg text-slate-900">Agregar impresora</h3>
-        <button appBtn variant="ghost" size="sm" (click)="closeAddPrinterDialogClick.emit()" type="button">
+        <button appBtn variant="ghost" size="sm" (click)="printers.closeAddPrinterDialog()" type="button">
           <ng-icon name="matClose" size="16"></ng-icon>
         </button>
       </div>
       <div class="p-4 flex flex-col gap-4">
-        @if (savingPrinter()) {
+        @if (printers.savingPrinter()) {
           <div class="flex items-center gap-3 p-4 rounded-lg bg-blue-50 border border-blue-200">
             <span class="w-5 h-5 border-2 border-blue-500 border-r-transparent rounded-full animate-spin shrink-0"></span>
             <div class="flex flex-col">
@@ -276,20 +226,20 @@
             <ng-icon name="matPrint" size="20" class="text-blue-600"></ng-icon>
             <div class="flex flex-col">
               <span class="text-xs text-blue-600 font-medium">Dirección IP</span>
-              <span class="font-mono text-sm font-semibold text-blue-900">{{ addingPrinter() }}</span>
+              <span class="font-mono text-sm font-semibold text-blue-900">{{ printers.addingPrinter() }}</span>
             </div>
           </div>
           <div class="flex flex-col gap-1.5">
             <label for="printerName" class="label-xs">Nombre de la impresora</label>
-            <input 
+            <input
               id="printerName"
-              type="text" 
+              type="text"
               class="h-9 px-3 rounded-md border border-slate-300 text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="Ej: Impresora Principal"
-              [value]="printerNameInput()"
-              (input)="printerNameInputChange.emit($any($event.target).value)"
-              (keydown.enter)="confirmAddPrinterClick.emit()"
-              [disabled]="savingPrinter()"
+              [value]="printers.printerNameInput()"
+              (input)="printers.printerNameInput.set($any($event.target).value)"
+              (keydown.enter)="printers.confirmAddPrinter()"
+              [disabled]="printers.savingPrinter()"
               autofocus />
           </div>
           <p class="text-xs text-slate-500">
@@ -298,11 +248,11 @@
         }
       </div>
       <div class="flex gap-2 p-4 border-t border-slate-200 bg-slate-50">
-        <button appBtn variant="ghost" size="sm" (click)="closeAddPrinterDialogClick.emit()" type="button" class="flex-1" [disabled]="savingPrinter()">
+        <button appBtn variant="ghost" size="sm" (click)="printers.closeAddPrinterDialog()" type="button" class="flex-1" [disabled]="printers.savingPrinter()">
           Cancelar
         </button>
-        <button appBtn variant="primary" size="sm" (click)="confirmAddPrinterClick.emit()" [disabled]="!printerNameInput() || savingPrinter()" type="button" class="flex-1">
-          @if (savingPrinter()) {
+        <button appBtn variant="primary" size="sm" (click)="printers.confirmAddPrinter()" [disabled]="!printers.printerNameInput() || printers.savingPrinter()" type="button" class="flex-1">
+          @if (printers.savingPrinter()) {
             <span class="w-3 h-3 border-2 border-white border-r-transparent rounded-full animate-spin"></span>
             Agregando...
           } @else {
