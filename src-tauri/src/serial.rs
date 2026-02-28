@@ -205,31 +205,45 @@ pub(crate) fn list_serial_ports() -> Vec<SerialPort> {
 
     #[cfg(target_os = "windows")]
     {
-        if let Ok(output) = crate::hidden_cmd("wmic")
-            .args(["path", "Win32_SerialPort", "get", "DeviceID,Description", "/format:csv"])
+        if let Ok(output) = crate::hidden_cmd("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Get-PnpDevice -PresentOnly | Where-Object { $_.Class -match 'Ports|USB' } | Select-Object Class, FriendlyName, InstanceId | ConvertTo-Csv -NoTypeInformation",
+            ])
             .output()
         {
             let text = String::from_utf8_lossy(&output.stdout).to_string();
-            for line in text.lines().skip(2) {
-                let cols: Vec<&str> = line.split(',').collect();
-                let port_name = cols
-                    .iter()
-                    .map(|s| s.trim())
-                    .find(|s| s.starts_with("COM"))
-                    .unwrap_or("")
-                    .to_string();
-                let description = cols.get(1).map(|s| s.trim()).unwrap_or("").to_string();
-                if !port_name.is_empty() {
-                    let device_type = if description.to_lowercase().contains("usb") {
-                        "USB-Serial"
-                    } else {
-                        "COM"
-                    };
-                    ports.push(SerialPort {
-                        port_name,
-                        description,
-                        device_type: device_type.to_string(),
-                    });
+            for line in text.lines().skip(1) {
+                if line.trim().is_empty() { continue; }
+                let parts: Vec<&str> = line.split("\",\"").collect();
+                if parts.len() >= 3 {
+                    let dev_class = parts[0].trim_matches('"');
+                    let friendly_name = parts[1].trim_matches('"');
+                    let instance_id = parts[2].trim_matches('"');
+
+                    if dev_class.eq_ignore_ascii_case("Ports") {
+                        if let Some(start) = friendly_name.rfind("(COM") {
+                            if let Some(end) = friendly_name[start..].find(')') {
+                                let port_name = &friendly_name[start + 1..start + end];
+                                ports.push(SerialPort {
+                                    port_name: port_name.to_string(),
+                                    description: friendly_name.to_string(),
+                                    device_type: "USB-Serial".to_string(),
+                                });
+                            }
+                        }
+                    } else if dev_class.eq_ignore_ascii_case("USB") {
+                        let name_lower = friendly_name.to_lowercase();
+                        if name_lower.contains("print") || name_lower.contains("impresora") || name_lower.contains("tm-") || name_lower.contains("bixolon") || name_lower.contains("pos") {
+                            ports.push(SerialPort {
+                                port_name: instance_id.to_string(),
+                                description: friendly_name.to_string(),
+                                device_type: "USB-Printer".to_string(),
+                            });
+                        }
+                    }
                 }
             }
         }

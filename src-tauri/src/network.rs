@@ -230,27 +230,41 @@ pub fn get_network_config() -> Result<NetworkConfig, String> {
 
     #[cfg(target_os = "windows")]
     {
+        use std::process::Command;
+        let ipconfig = Command::new("ipconfig").output().ok();
+        let mut interface = "Ethernet".to_string();
+        if let Some(out) = ipconfig {
+            let ipconfig_str = String::from_utf8_lossy(&out.stdout);
+            if let Some(line) = ipconfig_str.lines().find(|line| line.contains("Ethernet") || line.contains("Wi-Fi")) {
+                if let Some(name) = line.split(':').next() {
+                    interface = name.trim().to_string();
+                }
+            }
+        }
+
         let output = crate::hidden_cmd("netsh")
-            .args(["interface", "ip", "show", "config"])
+            .args(["interface", "ip", "show", "config", &interface])
             .output()
             .map_err(|e| format!("Error al obtener configuración: {}", e))?;
         let config_str = String::from_utf8_lossy(&output.stdout);
         let mut ip = String::new();
         let mut mask = String::new();
         let mut gateway = String::new();
-        let interface = "Ethernet".to_string();
         for line in config_str.lines() {
             let line = line.trim();
-            if line.starts_with("Dirección IP") || line.starts_with("IP Address") {
+            if line.starts_with("Dirección IPv4") || line.starts_with("IPv4 Address") || line.starts_with("Dirección IP") || line.starts_with("IP Address") {
                 if let Some(addr) = line.split(':').nth(1) {
                     ip = addr.trim().to_string();
                 }
-            } else if line.starts_with("Máscara de subred") || line.starts_with("Subnet Mask") {
+            } else if line.starts_with("Máscara de subred") || line.starts_with("Subnet Prefix") || line.starts_with("Subnet Mask") {
                 if let Some(m) = line.split(':').nth(1) {
-                    mask = m.trim().to_string();
+                    if let Some(real_mask) = m.split('(').next() {
+                        mask = real_mask.trim().to_string();
+                    } else {
+                        mask = m.trim().to_string();
+                    }
                 }
-            } else if line.starts_with("Puerta de enlace") || line.starts_with("Default Gateway")
-            {
+            } else if line.starts_with("Puerta de enlace") || line.starts_with("Default Gateway") {
                 if let Some(gw) = line.split(':').nth(1) {
                     gateway = gw.trim().to_string();
                 }
@@ -388,20 +402,30 @@ pub fn set_network_config(ip: String, mask: String, gateway: String) -> Result<S
 
     #[cfg(target_os = "windows")]
     {
-        let output = crate::hidden_cmd("netsh")
+        use std::process::Command;
+        let ipconfig = Command::new("ipconfig")
+            .output()
+            .map_err(|e| format!("Error al ejecutar ipconfig: {}", e))?;
+        let ipconfig_str = String::from_utf8_lossy(&ipconfig.stdout);
+        let interface_name = ipconfig_str
+            .lines()
+            .find(|line| line.contains("Ethernet") || line.contains("Wi-Fi"))
+            .and_then(|line| line.split(':').next())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "Ethernet".to_string());
+
+        let script = format!(
+            "netsh interface ip set address name=\"{}\" static {} {} {}",
+            interface_name, ip, mask, gateway
+        );
+        let output = Command::new("powershell")
             .args([
-                "interface",
-                "ip",
-                "set",
-                "address",
-                "name=Ethernet",
-                "source=static",
-                &format!("addr={}", ip),
-                &format!("mask={}", mask),
-                &format!("gateway={}", gateway),
+                "-Command",
+                &format!("Start-Process cmd -ArgumentList '/c {}' -Verb RunAs -WindowStyle Hidden -Wait", script),
             ])
             .output()
             .map_err(|e| format!("Error al configurar red: {}", e))?;
+            
         if output.status.success() {
             Ok("Configuración de red actualizada correctamente".to_string())
         } else {
@@ -538,7 +562,7 @@ pub fn restore_network_dhcp() -> Result<String, String> {
         let output = Command::new("powershell")
             .args([
                 "-Command",
-                &format!("Start-Process cmd -ArgumentList '/c {}' -Verb RunAs -Wait", script),
+                &format!("Start-Process cmd -ArgumentList '/c {}' -Verb RunAs -WindowStyle Hidden -Wait", script),
             ])
             .output()
             .map_err(|e| format!("Error al ejecutar comando: {}", e))?;
