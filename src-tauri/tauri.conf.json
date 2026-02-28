@@ -23,6 +23,11 @@
       "csp": null
     }
   },
+  "plugins": {
+    "autostart": {
+      "macOSHidden": true
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
