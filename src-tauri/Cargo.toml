@@ -35,3 +35,8 @@ escpos = { version = "0.17.0", features = ["graphics"] }
 base64 = "0.22"
 tiny_http = "0.12"
 pdfium-render = "0.8.37"
+nusb = "0.1.14"
+winapi = { version = "0.3.9", features = ["winspool", "errhandlingapi", "handleapi", "minwindef"] }
+rusb = "0.9.4"
+windows-sys = { version = "0.61.2", features = ["Win32_Devices_Communication", "Win32_Foundation", "Win32_System_IO", "Win32_Storage_FileSystem"] }
+windows = { version = "0.61.3", features = ["Win32_Graphics_Gdi", "Win32_Foundation", "Win32_Graphics_Printing"] }

@@ -205,25 +205,85 @@ pub(crate) fn list_serial_ports() -> Vec<SerialPort> {
 
     #[cfg(target_os = "windows")]
     {
+        // Script de PowerShell optimizado que evita codificar nombres estáticos ("micro-printer").
+        // Busca impresoras mediante las propiedades de clase y servicio, 
+        // e identifica interfaces compuestas o desconocidas utilizando la clase de hardware 'Class_07',
+        // que es el estándar universal para dispositivos de impresión USB.
+        let ps_script = r#"
+            $devs = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue
+            $results = @()
+            foreach ($d in $devs) {
+                if ($null -eq $d -or $null -eq $d.PNPDeviceID) { continue }
+                
+                $id = $d.PNPDeviceID
+                $name = $d.Caption
+                $class = $d.PNPClass
+                if ($null -eq $class) { $class = "" }
+                $svc = $d.Service
+                if ($null -eq $svc) { $svc = "" }
+
+                $isPrinter = $false
+                $isSerial = $false
+
+                if ($class -eq 'Ports' -and $name -match '\(COM\d+\)') {
+                    $isSerial = $true
+                }
+                elseif ($id -match '^USBPRINT\\' -or $svc -eq 'usbprint' -or ($class -eq 'USB' -and $name -match 'print|impresora|pos-|tm-|bixolon|receipt|thermal|termica')) {
+                    $isPrinter = $true
+                }
+                elseif ($id -match '^USB\\') {
+                    # Si no está clasificada explícitamente pero es USB, miramos si expone 'Class_07' (USB Printer)
+                    # en sus Compatible IDs registrados en el sistema. Esto detecta impresoras crudas ("No especificado")
+                    $compat = (Get-PnpDeviceProperty -InstanceId $id -KeyName 'DEVPKEY_Device_CompatibleIds' -ErrorAction SilentlyContinue).Data -join ','
+                    if ($compat -match 'Class_07') {
+                        $isPrinter = $true
+                    }
+                }
+
+                if ($isPrinter -or $isSerial) {
+                    # ¡AQUÍ ESTÁ EL SECRETO DEL NOMBRE COMERCIAL REAL!
+                    # Windows oculta el nombre original que reporta el fabricante (Ej: "micro-printer", "XP-80")
+                    # en la propiedad de hardware BusReportedDeviceDesc.
+                    # Si existe, sobrescribimos el nombre genérico "Compatibilidad con impresoras USB"
+                    if ($id -match '^USB') {
+                        $busDesc = (Get-PnpDeviceProperty -InstanceId $id -KeyName 'DEVPKEY_Device_BusReportedDeviceDesc' -ErrorAction SilentlyContinue).Data
+                        if ($busDesc -and $busDesc.Trim() -ne '') {
+                            $name = $busDesc.Trim()
+                        }
+                    }
+
+                    $type = if ($isPrinter) { "USB-Printer" } else { "USB-Serial" }
+                    $results += [PSCustomObject]@{
+                        Class = $class
+                        FriendlyName = $name
+                        InstanceId = $id
+                        Type = $type
+                    }
+                }
+            }
+            $results | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1
+        "#;
+
         if let Ok(output) = crate::hidden_cmd("powershell")
             .args([
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
-                "Get-PnpDevice -PresentOnly | Where-Object { $_.Class -match 'Ports|USB' } | Select-Object Class, FriendlyName, InstanceId | ConvertTo-Csv -NoTypeInformation",
+                ps_script,
             ])
             .output()
         {
             let text = String::from_utf8_lossy(&output.stdout).to_string();
-            for line in text.lines().skip(1) {
+            // Cada línea procesada por ConvertTo-Csv es "Class","FriendlyName","InstanceId","Type"
+            for line in text.lines() {
                 if line.trim().is_empty() { continue; }
                 let parts: Vec<&str> = line.split("\",\"").collect();
-                if parts.len() >= 3 {
-                    let dev_class = parts[0].trim_matches('"');
+                if parts.len() >= 4 {
                     let friendly_name = parts[1].trim_matches('"');
                     let instance_id = parts[2].trim_matches('"');
+                    let dev_type = parts[3].trim_matches('"');
 
-                    if dev_class.eq_ignore_ascii_case("Ports") {
+                    if dev_type == "USB-Serial" {
                         if let Some(start) = friendly_name.rfind("(COM") {
                             if let Some(end) = friendly_name[start..].find(')') {
                                 let port_name = &friendly_name[start + 1..start + end];
@@ -234,15 +294,12 @@ pub(crate) fn list_serial_ports() -> Vec<SerialPort> {
                                 });
                             }
                         }
-                    } else if dev_class.eq_ignore_ascii_case("USB") {
-                        let name_lower = friendly_name.to_lowercase();
-                        if name_lower.contains("print") || name_lower.contains("impresora") || name_lower.contains("tm-") || name_lower.contains("bixolon") || name_lower.contains("pos") {
-                            ports.push(SerialPort {
-                                port_name: instance_id.to_string(),
-                                description: friendly_name.to_string(),
-                                device_type: "USB-Printer".to_string(),
-                            });
-                        }
+                    } else if dev_type == "USB-Printer" {
+                        ports.push(SerialPort {
+                            port_name: instance_id.to_string(),
+                            description: friendly_name.to_string(),
+                            device_type: "USB-Printer".to_string(),
+                        });
                     }
                 }
             }

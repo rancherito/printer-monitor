@@ -45,3 +45,4 @@ Thumbs.db
 
 # Tauri / Rust build output
 /src-tauri/target/
+usb-test

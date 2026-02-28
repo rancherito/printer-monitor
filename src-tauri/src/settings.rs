@@ -2,6 +2,18 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::net::TcpListener;
 use tauri::Manager;
+use std::path::PathBuf;
+use std::sync::OnceLock;
+
+pub static DB_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn init_db_path(app: &tauri::AppHandle) {
+    let path = app.path()
+        .app_data_dir()
+        .expect("No se pudo obtener app_data_dir")
+        .join("settings.db");
+    let _ = DB_PATH.set(path);
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AppSettings {
@@ -19,21 +31,34 @@ fn db_path(app: &tauri::AppHandle) -> std::path::PathBuf {
         .join("settings.db")
 }
 
-pub(crate) fn open_db(app: &tauri::AppHandle) -> Result<Connection, String> {
-    let path = db_path(app);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("No se pudo crear directorio de datos: {e}"))?;
+pub(crate) fn open_db_global() -> Result<Connection, String> {
+    if let Some(path) = DB_PATH.get() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("No se pudo crear directorio de datos: {e}"))?;
+        }
+        let conn = Connection::open(path).map_err(|e| format!("No se pudo abrir la BD: {e}"))?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS custom_printers (
+                alias TEXT PRIMARY KEY,
+                connection_type TEXT NOT NULL,
+                address TEXT NOT NULL
+            );",
+        )
+        .map_err(|e| format!("No se pudo inicializar la BD: {e}"))?;
+        Ok(conn)
+    } else {
+        Err("DB_PATH no inicializado".to_string())
     }
-    let conn = Connection::open(&path).map_err(|e| format!("No se pudo abrir la BD: {e}"))?;
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS settings (
-            key   TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );",
-    )
-    .map_err(|e| format!("No se pudo inicializar la BD: {e}"))?;
-    Ok(conn)
+}
+
+pub(crate) fn open_db(app: &tauri::AppHandle) -> Result<Connection, String> {
+    init_db_path(app);
+    open_db_global()
 }
 
 pub(crate) fn db_get(conn: &Connection, key: &str) -> Option<String> {

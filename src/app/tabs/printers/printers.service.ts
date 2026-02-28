@@ -15,6 +15,8 @@ export class PrintersService {
   // ── Estado de la lista ─────────────────────────────────────────────────
   readonly loading = signal(true);
   readonly printers = signal<PrinterInfo[]>([]);
+  readonly osPrinters = computed(() => this.printers().filter(p => !p.name.endsWith(' (Directo)')));
+  readonly appPrinters = computed(() => this.printers().filter(p => p.name.endsWith(' (Directo)')));
   readonly serialPorts = signal<SerialPort[]>([]);
 
   // ── Impresión de prueba ────────────────────────────────────────────────

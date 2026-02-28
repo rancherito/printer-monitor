@@ -24,6 +24,22 @@ pub struct PrinterInfo {
 /// La estrategia robusta es buscar el token "printer" o "impresora" en cada
 /// línea y tomar el token inmediatamente siguiente como nombre de cola.
 ///
+/// Imprime directamente enviando bytes a través de file handle (usado para Bypass a hardware USB)
+fn print_usb_direct(device_path: &str, data: &[u8]) -> Result<(), String> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    
+    let mut usb_file = OpenOptions::new()
+        .write(true)
+        .open(device_path)
+        .map_err(|e| format!("Fallo abriendo el acceso directo al dispositivo USB (Verifique que la impresora esté conectada): {}", e))?;
+        
+    usb_file.write_all(data)
+        .map_err(|e| format!("Error en escritura directa de bytes a USB: {}", e))?;
+    let _ = usb_file.flush();
+    Ok(())
+}
+
 /// Windows: usa `Get-Printer` (PowerShell moderno) con `wmic` como fallback
 /// para sistemas con Windows < 10 21H1 donde wmic todavía funciona.
 #[tauri::command]
@@ -230,6 +246,26 @@ pub fn get_printers() -> Vec<PrinterInfo> {
                         };
                         printers.push(PrinterInfo { name: name.clone(), queue_name: name, is_default, status });
                     }
+                }
+            }
+        }
+    }
+    
+    // Agregar también las impresoras registradas en nuestra base de datos (Bypass local)
+    if let Ok(conn) = crate::settings::open_db_global() {
+        if let Ok(mut stmt) = conn.prepare("SELECT alias, connection_type FROM custom_printers") {
+            let printer_iter = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            });
+            if let Ok(rows) = printer_iter {
+                for pr in rows.flatten() {
+                    let alias = pr.0;
+                    printers.push(PrinterInfo {
+                        name: format!("{} (Directo)", alias),
+                        queue_name: alias,
+                        is_default: false,
+                        status: "Disponible".to_string(),
+                    });
                 }
             }
         }
@@ -786,7 +822,7 @@ pub fn print_test(printer_name: String, size: String) -> Result<String, String> 
             })()
             .map_err(|e| format!("Error de impresión: {e}"))?;
         }
-        PrinterBackend::CupsRaw(ref queue) => {
+        PrinterBackend::OsRaw(ref queue) => {
             let print_width_px: u32 = match size.as_str() {
                 "thermal_80mm" => 576,
                 _ => 384,
@@ -825,7 +861,42 @@ pub fn print_test(printer_name: String, size: String) -> Result<String, String> 
             let mut payload = logo_escstar;
             payload.push(0x0A);
             payload.extend_from_slice(&shared_buf.lock().unwrap());
-            print_raw_cups(queue, &payload)?;
+            print_raw_os(queue, &payload)?;
+        }
+        PrinterBackend::UsbDirect(ref path) => {
+            let print_width_px: u32 = match size.as_str() {
+                "thermal_80mm" => 576,
+                _ => 384,
+            };
+            let label = match size.as_str() {
+                "thermal_80mm" => "Termica 80mm",
+                _ => "Termica 58mm",
+            };
+            let logo_escstar = encode_image_escstar(APP_LOGO, print_width_px / 2)?;
+            let (driver, shared_buf) = VecDriver::new();
+            (|| -> escpos::errors::Result<()> {
+                use escpos::{printer::Printer, utils::*};
+                let mut p = Printer::new(driver, Protocol::default(), None);
+                p.init()?
+                    .justify(JustifyMode::CENTER)?
+                    .bold(true)?
+                    .writeln("Printer Monitor (Bypass directo)")?
+                    .bold(false)?
+                    .justify(JustifyMode::LEFT)?
+                    .writeln(label)?
+                    .writeln(&format!("Fecha: {}", chrono::Local::now().format("%d/%m/%Y %H:%M")))?
+                    .writeln("")?
+                    .writeln("Si ves esto, el bypass nativo USB funciona!")?
+                    .feeds(4)?
+                    .print_cut()?;
+                Ok(())
+            })()
+            .map_err(|e| format!("Error de impresión: {e}"))?;
+
+            let mut payload = logo_escstar;
+            payload.push(0x0A);
+            payload.extend_from_slice(&shared_buf.lock().unwrap());
+            print_usb_direct(path, &payload)?;
         }
     }
     Ok(format!("Prueba enviada a \u{ab}{}\u{bb}", printer_name))
@@ -965,7 +1036,7 @@ pub fn print_image_ticket(
             })()
             .map_err(|e| format!("Error de impresión: {e}"))?;
         }
-        PrinterBackend::CupsRaw(ref queue) => {
+        PrinterBackend::OsRaw(ref queue) => {
             // Imagen vía ESC * (compatible con micro-printers que no soportan GS v 0)
             let mut payload: Vec<u8> = Vec::new();
             payload.extend_from_slice(&[0x1B, 0x40]); // ESC @ — init
@@ -998,7 +1069,39 @@ pub fn print_image_ticket(
             .map_err(|e| format!("Error de impresión: {e}"))?;
 
             payload.extend_from_slice(&shared_buf.lock().unwrap());
-            print_raw_cups(queue, &payload)?;
+            print_raw_os(queue, &payload)?;
+        }
+        PrinterBackend::UsbDirect(ref path) => {
+            let mut payload: Vec<u8> = Vec::new();
+            payload.extend_from_slice(&[0x1B, 0x40]); // ESC @ — init
+
+            if let Some(ref img) = image_bytes {
+                let img_escstar = encode_image_escstar(img, print_width_px)?;
+                payload.extend_from_slice(&img_escstar);
+                payload.push(0x0A);
+            }
+
+            let (driver, shared_buf) = VecDriver::new();
+            (|| -> escpos::errors::Result<()> {
+                use escpos::{printer::Printer, utils::*};
+                let mut p = Printer::new(driver, Protocol::default(), None);
+                if !title.is_empty() {
+                    p.justify(JustifyMode::CENTER)?
+                        .bold(true)?
+                        .writeln(&title)?
+                        .bold(false)?
+                        .justify(JustifyMode::LEFT)?;
+                }
+                for line in &body_lines {
+                    p.writeln(line)?;
+                }
+                p.feeds(4)?.print_cut()?;
+                Ok(())
+            })()
+            .map_err(|e| format!("Error de impresión: {e}"))?;
+
+            payload.extend_from_slice(&shared_buf.lock().unwrap());
+            print_usb_direct(path, &payload)?;
         }
     }
 
@@ -1009,16 +1112,28 @@ pub fn print_image_ticket(
 enum PrinterBackend {
     /// Impresora de red accesible por TCP socket (URI `socket://ip:puerto`).
     Network(String, u16),
-    /// Impresora USB registrada en CUPS (URI `usb://`, `ipp://`, `lpd://`, etc.).
-    /// Los datos ESC/POS se envían como trabajo raw vía `lp -d queue -o raw`.
-    CupsRaw(String),
+    /// Impresora USB o lógica registrada en SO (CUPS o Windows Spooler vía winapi)
+    OsRaw(String),
+    /// Bypass directo al hardware USB usando File Handle (Windows r"\\?\...")
+    UsbDirect(String),
 }
 
 /// Determina cómo conectar con una impresora CUPS por su nombre de cola.
 ///
 /// - `socket://` → [`PrinterBackend::Network`] (ESC/POS directo por TCP)
-/// - `usb://`, `ipp://`, `lpd://` → [`PrinterBackend::CupsRaw`] (job raw vía `lp`)
+/// - `usb://`, `ipp://`, `lpd://` → [`PrinterBackend::OsRaw`] (job raw vía `lp`)
 fn resolve_printer_backend(printer_name: &str) -> Result<PrinterBackend, String> {
+    // 1. Buscamos primero si es una impresora USB directa guardada en nuestra base de datos (Bypass OS Spooler)
+    if let Ok(conn) = crate::settings::open_db_global() {
+        if let Ok(addr) = conn.query_row(
+            "SELECT address FROM custom_printers WHERE alias = ?1 AND connection_type = 'usb'",
+            rusqlite::params![printer_name],
+            |row| row.get::<_, String>(0)
+        ) {
+            return Ok(PrinterBackend::UsbDirect(addr));
+        }
+    }
+
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         use std::process::Command;
@@ -1051,7 +1166,7 @@ fn resolve_printer_backend(printer_name: &str) -> Result<PrinterBackend, String>
             let lo = l.to_lowercase();
             lo.contains("usb://") || lo.contains("ipp://") || lo.contains("lpd://")
         }) {
-            return Ok(PrinterBackend::CupsRaw(printer_name.to_string()));
+            return Ok(PrinterBackend::OsRaw(printer_name.to_string()));
         }
 
         Err(format!(
@@ -1076,7 +1191,8 @@ fn resolve_printer_backend(printer_name: &str) -> Result<PrinterBackend, String>
             .map_err(|e| format!("No se pudo ejecutar PowerShell: {e}"))?;
         let host = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if host.is_empty() || host.to_lowercase().contains("null") {
-            Err(format!("No se encontró la IP de \u{ab}{printer_name}\u{bb}."))
+            // Si no tiene IP, es probablemente local o USB
+            Ok(PrinterBackend::OsRaw(printer_name.to_string()))
         } else {
             Ok(PrinterBackend::Network(host, 9100))
         }
@@ -1089,7 +1205,7 @@ fn resolve_printer_backend(printer_name: &str) -> Result<PrinterBackend, String>
 /// Envía datos ESC/POS crudos a una cola CUPS.
 /// Escribe en un archivo temporal y usa `lp -d queue -o raw`.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn print_raw_cups(queue_name: &str, data: &[u8]) -> Result<(), String> {
+fn print_raw_os(queue_name: &str, data: &[u8]) -> Result<(), String> {
     let tmp = format!(
         "/private/tmp/pm_escpos_{}.bin",
         std::time::SystemTime::now()
@@ -1396,8 +1512,24 @@ pub fn add_usb_printer(device_name: String, cups_name: String) -> Result<String,
 
     #[cfg(target_os = "windows")]
     {
-        let _ = (device_name, cups_name);
-        Err("Agregar impresoras USB en Windows no está disponible desde esta herramienta.".to_string())
+        // En Windows evitamos el Spooler porque genera problemas con impresoras térmicas.
+        // Guardamos el enlace simbólico del hardware USB en nuestra base de datos.
+        
+        let path_escaped = device_name.replace("\\", "#");
+        let device_path = format!(r"\\?\{}#{{a5dcbf10-6530-11d2-901f-00c04fb951ed}}", path_escaped);
+
+        if let Ok(conn) = crate::settings::open_db_global() {
+            match conn.execute(
+                "INSERT INTO custom_printers (alias, connection_type, address) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(alias) DO UPDATE SET connection_type = excluded.connection_type, address = excluded.address",
+                rusqlite::params![cups_name, "usb", device_path],
+            ) {
+                Ok(_) => Ok(format!("Impresora instalada en Windows como '{}' (Bypass directo a USB)", cups_name)),
+                Err(e) => Err(format!("Error guardando impresora en BD interna: {}", e)),
+            }
+        } else {
+            Err("No se pudo acceder a la configuración interna BD.".to_string())
+        }
     }
 }
 
@@ -1434,8 +1566,11 @@ pub fn print_pdf_job(pdf_b64: &str, printer_name: &str, width: &str) -> Result<S
     payload.extend_from_slice(&[0x1D, 0x56, 0x41, 0x00]); // corte
 
     match resolve_printer_backend(printer_name)? {
-        PrinterBackend::CupsRaw(ref queue) => {
-            print_raw_cups(queue, &payload)?;
+        PrinterBackend::OsRaw(ref queue) => {
+            print_raw_os(queue, &payload)?;
+        }
+        PrinterBackend::UsbDirect(ref path) => {
+            print_usb_direct(path, &payload)?;
         }
         PrinterBackend::Network(ref ip, port) => {
             use std::io::Write;
@@ -1596,6 +1731,69 @@ fn trim_white_rows_bottom(png_bytes: &[u8]) -> Result<Vec<u8>, String> {
 
 
 #[cfg(target_os = "windows")]
-fn print_raw_cups(_queue_name: &str, _data: &[u8]) -> Result<(), String> {
-    Err("Las colas Raw USB usando enrutador del sistema aun no estan soportadas en esta actualizacion de Windows. Enlaza tu termica via Red (TCP/IP).".to_string())
+fn print_raw_os(queue_name: &str, data: &[u8]) -> Result<(), String> {
+    use std::ptr::null_mut;
+    use std::os::windows::ffi::OsStrExt;
+    use winapi::um::winspool::*;
+    use winapi::shared::minwindef::*;
+    use winapi::um::errhandlingapi::GetLastError;
+
+    fn string_to_wide(s: &str) -> Vec<u16> {
+        std::ffi::OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    unsafe {
+        let mut handle: winapi::um::winnt::HANDLE = null_mut();
+        let mut name_wide = string_to_wide(queue_name);
+        
+        let mut defaults = PRINTER_DEFAULTSW {
+            pDataType: null_mut(),
+            pDevMode: null_mut(),
+            DesiredAccess: winapi::um::winspool::PRINTER_ACCESS_USE,
+        };
+
+        if OpenPrinterW(name_wide.as_mut_ptr(), &mut handle, &mut defaults) == 0 {
+            return Err("Falló al abrir la conexión con la impresora. Verifica que el nombre sea correcto y que esté conectada.".to_string());
+        }
+
+        let mut doc_name = string_to_wide("Printer Monitor RAW Print");
+        let mut data_type = string_to_wide("RAW");
+
+        let mut di = DOC_INFO_1W {
+            pDocName: doc_name.as_mut_ptr(),
+            pOutputFile: null_mut(),
+            pDatatype: data_type.as_mut_ptr(),
+        };
+
+        if StartDocPrinterW(handle, 1, &mut di as *mut _ as *mut u8) == 0 {
+            let _ = ClosePrinter(handle);
+            return Err(format!("Falló al iniciar el documento de impresión. Código de error: {}", GetLastError()));
+        }
+
+        if StartPagePrinter(handle) == 0 {
+            let _ = EndDocPrinter(handle);
+            let _ = ClosePrinter(handle);
+            return Err("Falló al iniciar la página de impresión.".to_string());
+        }
+
+        let mut bytes_written: DWORD = 0;
+        let success = WritePrinter(
+            handle,
+            data.as_ptr() as *mut _,
+            data.len() as u32,
+            &mut bytes_written,
+        );
+
+        let _ = EndPagePrinter(handle);
+        let _ = EndDocPrinter(handle);
+        let _ = ClosePrinter(handle);
+
+        if success == 0 {
+            return Err("Falló al enviar los datos a la impresora térmica.".to_string());
+        } else if bytes_written as usize != data.len() {
+            return Err(format!("Transmisión incompleta. Solo se escribieron {} de {} bytes.", bytes_written, data.len()));
+        }
+        
+        Ok(())
+    }
 }
