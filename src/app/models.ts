@@ -4,7 +4,7 @@ export interface PrinterInfo {
   is_default: boolean;
   status: string;
   source: 'os' | 'app';
-  connection_type: 'os' | 'network' | 'usb_direct';
+  connection_type: 'os' | 'network' | 'usb_direct' | 'usb_system' | 'usb_app';
   address: string | null;
 }
 

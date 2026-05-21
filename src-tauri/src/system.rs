@@ -71,8 +71,12 @@ fn get_autostart_status() -> bool {
     }
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         use std::process::Command;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
         let out = Command::new("reg")
+            .creation_flags(CREATE_NO_WINDOW)
             .args(["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "PrinterMonitor"])
             .output();
         out.map(|o| o.status.success()).unwrap_or(false)
@@ -99,15 +103,20 @@ fn set_autostart(enabled: bool) -> Result<(), String> {
     {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let exe_str = exe.to_string_lossy();
+        use std::os::windows::process::CommandExt;
         use std::process::Command;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
         if enabled {
             Command::new("reg")
+                .creation_flags(CREATE_NO_WINDOW)
                 .args(["add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
                        "/v", "PrinterMonitor", "/d", &exe_str, "/f"])
                 .output()
                 .map_err(|e| e.to_string())?;
         } else {
             Command::new("reg")
+                .creation_flags(CREATE_NO_WINDOW)
                 .args(["delete", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
                        "/v", "PrinterMonitor", "/f"])
                 .output()

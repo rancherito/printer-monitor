@@ -16,6 +16,7 @@ pub trait PrinterStrategy: Send + Sync {
     fn list_printers(&self) -> Vec<PrinterInfo>;
     fn install_network(&self, ip: &str, name: &str) -> Result<String, String>;
     fn install_usb(&self, port: &str, name: &str) -> Result<String, String>;
+    fn test_usb_printer(&self, port: &str, size: &str) -> Result<String, String>;
     fn remove_printer(&self, queue_name: &str) -> Result<String, String>;
     fn rename_printer(&self, queue_name: &str, new_name: &str) -> Result<String, String>;
     fn print_test(&self, queue_name: &str, size: &str) -> Result<String, String>;

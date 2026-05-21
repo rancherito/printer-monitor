@@ -15,9 +15,7 @@ export function guardPortSelected(port: string | null): string | null {
   return port ? null : 'Selecciona un puerto USB.';
 }
 
-export function guardIpSelected(ip: string | null): string | null {
-  return ip ? null : 'Selecciona una IP de la lista.';
-}
+export type TestStatus = 'idle' | 'testing' | 'ok' | 'fail';
 
 // ─── Servicio ─────────────────────────────────────────────────────────────────
 @Injectable({ providedIn: 'root' })
@@ -32,16 +30,21 @@ export class PrintersService {
   readonly tcpDialogOpen = signal(false);
   readonly tcpScanning = signal(false);
   readonly tcpFoundIps = signal<string[]>([]);
-  readonly tcpSelectedIp = signal<string | null>(null);
+  readonly tcpIpInput = signal('');
   readonly tcpAlias = signal('');
   readonly tcpResult = signal<string | null>(null);
+  readonly tcpTestStatus = signal<TestStatus>('idle');
+  readonly tcpTestMsg = signal<string | null>(null);
 
   // USB dialog state
   readonly usbDialogOpen = signal(false);
   readonly usbPorts = signal<string[]>([]);
   readonly usbSelectedPort = signal<string | null>(null);
+  readonly usbMode = signal<'system' | 'app'>('system');
   readonly usbAlias = signal('');
   readonly usbResult = signal<string | null>(null);
+  readonly usbTestStatus = signal<TestStatus>('idle');
+  readonly usbTestMsg = signal<string | null>(null);
 
   readonly osPrinters = computed(() => this.printers().filter(p => p.source === 'os'));
   readonly appPrinters = computed(() => this.printers().filter(p => p.source === 'app'));
@@ -96,12 +99,15 @@ export class PrintersService {
   }
 
   // ─── TCP Dialog ───────────────────────────────────────────────────────────
-  openTcpDialog(): void {
+  openTcpDialog(subnet: string): void {
     this.tcpFoundIps.set([]);
-    this.tcpSelectedIp.set(null);
+    this.tcpIpInput.set('');
     this.tcpAlias.set('');
     this.tcpResult.set(null);
+    this.tcpTestStatus.set('idle');
+    this.tcpTestMsg.set(null);
     this.tcpDialogOpen.set(true);
+    void this.scanTcpIpPrinters(subnet);
   }
 
   closeTcpDialog(): void { this.tcpDialogOpen.set(false); }
@@ -110,6 +116,7 @@ export class PrintersService {
     const err = guardValidIp(subnet.split('.').slice(0, 3).join('.') + '.1');
     if (err) { this.tcpResult.set('Subred inválida.'); return; }
     this.tcpScanning.set(true);
+    this.tcpResult.set(null);
     try {
       const ips = await this.tauri.scanTcpIpPrinters(subnet);
       this.tcpFoundIps.set(ips);
@@ -121,15 +128,14 @@ export class PrintersService {
   }
 
   async confirmAddTcpPrinter(): Promise<void> {
-    const ipErr = guardIpSelected(this.tcpSelectedIp());
-    if (ipErr) { this.tcpResult.set(ipErr); return; }
+    const ip = this.tcpIpInput().trim();
+    const ipValidErr = guardValidIp(ip);
+    if (ipValidErr) { this.tcpResult.set('Ingresa una IP válida (ej. 192.168.1.100).'); return; }
     const nameErr = guardNonEmpty(this.tcpAlias());
     if (nameErr) { this.tcpResult.set(nameErr); return; }
-    const ipValidErr = guardValidIp(this.tcpSelectedIp()!);
-    if (ipValidErr) { this.tcpResult.set(ipValidErr); return; }
 
     try {
-      await this.tauri.addNetworkPrinter(this.tcpSelectedIp()!, this.tcpAlias());
+      await this.tauri.addNetworkPrinter(ip, this.tcpAlias());
       await this.loadPrinters();
       this.closeTcpDialog();
     } catch (e) {
@@ -137,11 +143,29 @@ export class PrintersService {
     }
   }
 
+  async testPrintTcp(): Promise<void> {
+    const ip = this.tcpIpInput().trim();
+    if (guardValidIp(ip)) { this.tcpTestStatus.set('fail'); this.tcpTestMsg.set('Ingresa una IP válida primero.'); return; }
+    this.tcpTestStatus.set('testing');
+    this.tcpTestMsg.set(null);
+    try {
+      await this.tauri.printTestTcp(ip, '58mm');
+      this.tcpTestStatus.set('ok');
+      this.tcpTestMsg.set('Impresión enviada correctamente.');
+    } catch (e) {
+      this.tcpTestStatus.set('fail');
+      this.tcpTestMsg.set(String(e));
+    }
+  }
+
   // ─── USB Dialog ───────────────────────────────────────────────────────────
   async openUsbDialog(): Promise<void> {
     this.usbSelectedPort.set(null);
+    this.usbMode.set('system');
     this.usbAlias.set('');
     this.usbResult.set(null);
+    this.usbTestStatus.set('idle');
+    this.usbTestMsg.set(null);
     try {
       const ports = await this.tauri.getSerialPorts();
       this.usbPorts.set(ports);
@@ -153,6 +177,30 @@ export class PrintersService {
 
   closeUsbDialog(): void { this.usbDialogOpen.set(false); }
 
+  async refreshUsbPorts(): Promise<void> {
+    try {
+      const ports = await this.tauri.getSerialPorts();
+      this.usbPorts.set(ports);
+    } catch (e) {
+      this.usbPorts.set([]);
+    }
+  }
+
+  async testPrintUsb(): Promise<void> {
+    const port = this.usbSelectedPort();
+    if (!port) { this.usbTestStatus.set('fail'); this.usbTestMsg.set('Selecciona un puerto primero.'); return; }
+    this.usbTestStatus.set('testing');
+    this.usbTestMsg.set(null);
+    try {
+      await this.tauri.testUsbPrinter(port, '58mm');
+      this.usbTestStatus.set('ok');
+      this.usbTestMsg.set('Impresión enviada correctamente.');
+    } catch (e) {
+      this.usbTestStatus.set('fail');
+      this.usbTestMsg.set(String(e));
+    }
+  }
+
   async confirmAddUsbPrinter(): Promise<void> {
     const portErr = guardPortSelected(this.usbSelectedPort());
     if (portErr) { this.usbResult.set(portErr); return; }
@@ -160,7 +208,7 @@ export class PrintersService {
     if (nameErr) { this.usbResult.set(nameErr); return; }
 
     try {
-      await this.tauri.addUsbPrinter(this.usbSelectedPort()!, this.usbAlias());
+      await this.tauri.addUsbPrinter(this.usbSelectedPort()!, this.usbAlias(), this.usbMode());
       await this.loadPrinters();
       this.closeUsbDialog();
     } catch (e) {

@@ -24,12 +24,16 @@ export class TauriService {
     return invoke<string>('print_test_tcp', { ip, size });
   }
 
+  testUsbPrinter(port: string, size: string) {
+    return invoke<string>('test_usb_printer', { port, size });
+  }
+
   addNetworkPrinter(ip: string, name: string) {
     return invoke<string>('add_network_printer', { ip, name });
   }
 
-  addUsbPrinter(port: string, name: string) {
-    return invoke<string>('add_usb_printer', { port, name });
+  addUsbPrinter(port: string, name: string, mode: 'system' | 'app') {
+    return invoke<string>('add_usb_printer', { port, name, mode });
   }
 
   clearPrintQueue(queueName: string) {

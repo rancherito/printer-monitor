@@ -111,7 +111,13 @@
                 class="badge"
                 [class.badge--network]="printer.connection_type === 'network'"
                 [class.badge--usb]="printer.connection_type !== 'network'"
-              >{{ printer.connection_type === 'network' ? 'TCP/IP' : 'USB' }}</span>
+              >
+                {{
+                  printer.connection_type === 'network'
+                    ? 'TCP/IP'
+                    : (printer.connection_type === 'usb_system' ? 'USB (SO)' : 'USB (App)')
+                }}
+              </span>
             </div>
             <span class="app-printer__addr">{{ printer.address }}</span>
             <div class="printer-actions" role="group" [attr.aria-label]="'Acciones para ' + printer.name">
@@ -127,7 +133,7 @@
     </div>
 
     <div class="panel-sidebar__footer">
-      <cd-button variant="primary" size="sm" (clicked)="printers.openTcpDialog()">+ TCP/IP</cd-button>
+      <cd-button variant="primary" size="sm" (clicked)="printers.openTcpDialog(system.localIp())">+ TCP/IP</cd-button>
       <cd-button variant="secondary" size="sm" (clicked)="printers.openUsbDialog()">+ USB</cd-button>
     </div>
   </aside>
@@ -137,49 +143,116 @@
 <!-- ─── Dialog TCP/IP ─────────────────────────────────────────────────────── -->
 @if (printers.tcpDialogOpen()) {
   <div class="dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="tcp-dialog-title">
-    <div class="dialog">
-      <h3 id="tcp-dialog-title" class="dialog__title">Agregar impresora TCP/IP</h3>
+    <div class="dialog dialog--wide">
 
-      <cd-button size="sm" variant="secondary" [disabled]="printers.tcpScanning()" (clicked)="printers.scanTcpIpPrinters(system.localIp())">
-        {{ printers.tcpScanning() ? 'Escaneando…' : '🔍 Escanear red' }}
-      </cd-button>
-
-      @if (printers.tcpFoundIps().length > 0) {
-        <div class="dialog__field">
-          <label class="dialog__label" id="tcp-ip-label">IP detectada</label>
-          <select
-            class="dialog__input"
-            aria-labelledby="tcp-ip-label"
-            [ngModel]="printers.tcpSelectedIp()"
-            (ngModelChange)="printers.tcpSelectedIp.set($event)"
-          >
-            <option [ngValue]="null" disabled>Seleccionar IP…</option>
-            @for (ip of printers.tcpFoundIps(); track ip) {
-              <option [value]="ip">{{ ip }}</option>
-            }
-          </select>
-        </div>
-      }
-
-      <div class="dialog__field">
-        <label for="tcp-alias" class="dialog__label">Nombre / alias</label>
-        <input
-          id="tcp-alias"
-          type="text"
-          class="dialog__input"
-          placeholder="Ej: Caja principal"
-          [ngModel]="printers.tcpAlias()"
-          (ngModelChange)="printers.tcpAlias.set($event)"
-        />
+      <!-- Header -->
+      <div class="dialog__header">
+        <h3 id="tcp-dialog-title" class="dialog__title">
+          <span aria-hidden="true">🌐</span> Agregar impresora TCP/IP
+        </h3>
+        <button type="button" class="dialog__close" aria-label="Cerrar" (click)="printers.closeTcpDialog()">✕</button>
       </div>
 
-      @if (printers.tcpResult()) {
-        <p class="error-msg" role="alert">{{ printers.tcpResult() }}</p>
-      }
+      <div class="dialog__body">
 
-      <div class="dialog__actions">
-        <cd-button variant="ghost" size="sm" (clicked)="printers.closeTcpDialog()">Cancelar</cd-button>
-        <cd-button variant="primary" size="sm" (clicked)="printers.confirmAddTcpPrinter()">Agregar</cd-button>
+        <!-- ── Columna izquierda: descubrimiento ── -->
+        <div class="dialog__discovery">
+          <div class="dialog__section-header">
+            <span class="dialog__section-label">Descubrimiento en red</span>
+            <cd-button size="sm" variant="ghost" [disabled]="printers.tcpScanning()" (clicked)="printers.scanTcpIpPrinters(system.localIp())">↻ Escanear</cd-button>
+          </div>
+
+          @if (printers.tcpScanning()) {
+            <div class="discovery-scanning" aria-live="polite">
+              <span class="spinner" aria-hidden="true"></span>
+              <span>Escaneando red local…</span>
+            </div>
+          } @else if (printers.tcpFoundIps().length > 0) {
+            <div class="discovery-list" role="listbox" aria-label="IPs detectadas">
+              @for (ip of printers.tcpFoundIps(); track ip) {
+                <button
+                  type="button"
+                  class="discovery-item"
+                  [class.discovery-item--active]="printers.tcpIpInput() === ip"
+                  role="option"
+                  [attr.aria-selected]="printers.tcpIpInput() === ip"
+                  (click)="printers.tcpIpInput.set(ip); printers.tcpTestStatus.set('idle')"
+                >
+                  <span class="discovery-item__dot" aria-hidden="true"></span>
+                  <span class="discovery-item__ip">{{ ip }}</span>
+                  <span class="discovery-item__badge">TCP 9100</span>
+                </button>
+              }
+            </div>
+          } @else {
+            <p class="discovery-empty">No se detectaron impresoras. Escanea la red o ingresa la IP manualmente.</p>
+          }
+        </div>
+
+        <!-- ── Columna derecha: configuración ── -->
+        <div class="dialog__config">
+
+          <div class="dialog__field">
+            <label for="tcp-ip" class="dialog__label">Dirección IP</label>
+            <input
+              id="tcp-ip"
+              type="text"
+              class="dialog__input"
+              placeholder="192.168.1.100"
+              [ngModel]="printers.tcpIpInput()"
+              (ngModelChange)="printers.tcpIpInput.set($event); printers.tcpTestStatus.set('idle')"
+            />
+          </div>
+
+          <!-- Test print -->
+          <div class="test-block">
+            <cd-button
+              variant="secondary"
+              size="sm"
+              [disabled]="printers.tcpTestStatus() === 'testing' || !printers.tcpIpInput()"
+              (clicked)="printers.testPrintTcp()"
+            >
+              @if (printers.tcpTestStatus() === 'testing') {
+                <span class="spinner spinner--sm" aria-hidden="true"></span> Probando…
+              } @else {
+                <span aria-hidden="true">🖨</span> Probar impresión
+              }
+            </cd-button>
+            @if (printers.tcpTestStatus() !== 'idle') {
+              <span
+                class="test-status"
+                [class.test-status--ok]="printers.tcpTestStatus() === 'ok'"
+                [class.test-status--fail]="printers.tcpTestStatus() === 'fail'"
+                role="status"
+              >
+                @if (printers.tcpTestStatus() === 'ok') { ✓ {{ printers.tcpTestMsg() }} }
+                @if (printers.tcpTestStatus() === 'fail') { ✗ {{ printers.tcpTestMsg() }} }
+              </span>
+            }
+          </div>
+
+          <div class="dialog__field">
+            <label for="tcp-alias" class="dialog__label">Nombre / alias</label>
+            <input
+              id="tcp-alias"
+              type="text"
+              class="dialog__input"
+              placeholder="Ej: Caja principal"
+              [ngModel]="printers.tcpAlias()"
+              (ngModelChange)="printers.tcpAlias.set($event)"
+            />
+          </div>
+
+          @if (printers.tcpResult()) {
+            <p class="error-msg" role="alert">{{ printers.tcpResult() }}</p>
+          }
+
+          <div class="dialog__actions">
+            <cd-button variant="ghost" size="sm" (clicked)="printers.closeTcpDialog()">Cancelar</cd-button>
+            <cd-button variant="primary" size="sm" (clicked)="printers.confirmAddTcpPrinter()">Registrar</cd-button>
+          </div>
+        </div>
+
       </div>
     </div>
   </div>
@@ -188,47 +261,143 @@
 <!-- ─── Dialog USB ─────────────────────────────────────────────────────────── -->
 @if (printers.usbDialogOpen()) {
   <div class="dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="usb-dialog-title">
-    <div class="dialog">
-      <h3 id="usb-dialog-title" class="dialog__title">Agregar impresora USB</h3>
+    <div class="dialog dialog--wide">
 
-      <div class="dialog__field">
-        <label for="usb-port" class="dialog__label">Puerto USB</label>
-        @if (printers.usbPorts().length === 0) {
-          <p class="empty-msg">No se detectaron puertos.</p>
-        } @else {
-          <select
-            id="usb-port"
-            class="dialog__input"
-            [ngModel]="printers.usbSelectedPort()"
-            (ngModelChange)="printers.usbSelectedPort.set($event)"
-          >
-            <option [ngValue]="null" disabled>Seleccionar puerto…</option>
-            @for (port of printers.usbPorts(); track port) {
-              <option [value]="port">{{ port }}</option>
+      <!-- Header -->
+      <div class="dialog__header">
+        <h3 id="usb-dialog-title" class="dialog__title">
+          <span aria-hidden="true">🔌</span> Agregar impresora USB
+        </h3>
+        <button type="button" class="dialog__close" aria-label="Cerrar" (click)="printers.closeUsbDialog()">✕</button>
+      </div>
+
+      <div class="dialog__body">
+
+        <!-- ── Columna izquierda: puertos detectados ── -->
+        <div class="dialog__discovery">
+          <div class="dialog__section-header">
+            <span class="dialog__section-label">Puertos detectados</span>
+            <cd-button size="sm" variant="ghost" (clicked)="printers.refreshUsbPorts()">↻ Refrescar</cd-button>
+          </div>
+
+          @if (printers.usbPorts().length === 0) {
+            <p class="discovery-empty">No se detectaron puertos. Conecta la impresora y pulsa ↻ Refrescar.</p>
+          } @else {
+            <div class="discovery-list" role="listbox" aria-label="Puertos USB disponibles">
+              @for (port of printers.usbPorts(); track port) {
+                <button
+                  type="button"
+                  class="discovery-item"
+                  [class.discovery-item--active]="printers.usbSelectedPort() === port"
+                  role="option"
+                  [attr.aria-selected]="printers.usbSelectedPort() === port"
+                  (click)="printers.usbSelectedPort.set(port); printers.usbTestStatus.set('idle')"
+                >
+                  <span class="discovery-item__dot" aria-hidden="true"></span>
+                  <span class="discovery-item__ip">{{ port }}</span>
+                  <span class="discovery-item__badge">
+                    {{ port.startsWith('USB') ? 'USB Print' : 'Serial' }}
+                  </span>
+                </button>
+              }
+            </div>
+          }
+        </div>
+
+        <!-- ── Columna derecha: configuración ── -->
+        <div class="dialog__config">
+
+          <div class="dialog__field">
+            <span class="dialog__label">Puerto seleccionado</span>
+            <div class="selected-port">
+              @if (printers.usbSelectedPort()) {
+                <code class="selected-port__value">{{ printers.usbSelectedPort() }}</code>
+              } @else {
+                <span class="selected-port__placeholder">Selecciona un puerto de la lista</span>
+              }
+            </div>
+          </div>
+
+          <div class="dialog__field">
+            <span class="dialog__label">Modo de registro</span>
+            <div class="mode-selector" role="radiogroup" aria-label="Modo de registro USB">
+              <button
+                type="button"
+                class="mode-selector__item"
+                [class.mode-selector__item--active]="printers.usbMode() === 'system'"
+                role="radio"
+                [attr.aria-checked]="printers.usbMode() === 'system'"
+                (click)="printers.usbMode.set('system')"
+              >
+                <span class="mode-selector__title">Registrar en el sistema</span>
+                <span class="mode-selector__desc">Instala cola con driver genérico para usarla desde otras apps del equipo.</span>
+              </button>
+
+              <button
+                type="button"
+                class="mode-selector__item"
+                [class.mode-selector__item--active]="printers.usbMode() === 'app'"
+                role="radio"
+                [attr.aria-checked]="printers.usbMode() === 'app'"
+                (click)="printers.usbMode.set('app')"
+              >
+                <span class="mode-selector__title">Solo en esta app</span>
+                <span class="mode-selector__desc">No crea cola fija; la app intenta recuperar el puerto si cambia al reconectar USB.</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Test print -->
+          <div class="test-block">
+            <cd-button
+              variant="secondary"
+              size="sm"
+              [disabled]="printers.usbTestStatus() === 'testing' || !printers.usbSelectedPort()"
+              (clicked)="printers.testPrintUsb()"
+            >
+              @if (printers.usbTestStatus() === 'testing') {
+                <span class="spinner spinner--sm" aria-hidden="true"></span> Probando…
+              } @else {
+                <span aria-hidden="true">🖨</span> Probar impresión
+              }
+            </cd-button>
+            @if (printers.usbTestStatus() !== 'idle') {
+              <span
+                class="test-status"
+                [class.test-status--ok]="printers.usbTestStatus() === 'ok'"
+                [class.test-status--fail]="printers.usbTestStatus() === 'fail'"
+                role="status"
+              >
+                @if (printers.usbTestStatus() === 'ok') { ✓ {{ printers.usbTestMsg() }} }
+                @if (printers.usbTestStatus() === 'fail') { ✗ {{ printers.usbTestMsg() }} }
+              </span>
             }
-          </select>
-        }
-      </div>
+          </div>
 
-      <div class="dialog__field">
-        <label for="usb-alias" class="dialog__label">Nombre / alias</label>
-        <input
-          id="usb-alias"
-          type="text"
-          class="dialog__input"
-          placeholder="Ej: Impresora cocina"
-          [ngModel]="printers.usbAlias()"
-          (ngModelChange)="printers.usbAlias.set($event)"
-        />
-      </div>
+          <div class="dialog__field">
+            <label for="usb-alias" class="dialog__label">Nombre / alias</label>
+            <input
+              id="usb-alias"
+              type="text"
+              class="dialog__input"
+              placeholder="Ej: Impresora cocina"
+              [ngModel]="printers.usbAlias()"
+              (ngModelChange)="printers.usbAlias.set($event)"
+            />
+          </div>
 
-      @if (printers.usbResult()) {
-        <p class="error-msg" role="alert">{{ printers.usbResult() }}</p>
-      }
+          @if (printers.usbResult()) {
+            <p class="error-msg" role="alert">{{ printers.usbResult() }}</p>
+          }
 
-      <div class="dialog__actions">
-        <cd-button variant="ghost" size="sm" (clicked)="printers.closeUsbDialog()">Cancelar</cd-button>
-        <cd-button variant="primary" size="sm" (clicked)="printers.confirmAddUsbPrinter()">Agregar</cd-button>
+          <div class="dialog__actions">
+            <cd-button variant="ghost" size="sm" (clicked)="printers.closeUsbDialog()">Cancelar</cd-button>
+            <cd-button variant="primary" size="sm" (clicked)="printers.confirmAddUsbPrinter()">
+              {{ printers.usbMode() === 'system' ? 'Registrar en sistema' : 'Registrar en app' }}
+            </cd-button>
+          </div>
+        </div>
+
       </div>
     </div>
   </div>

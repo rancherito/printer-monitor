@@ -30,6 +30,7 @@ pub fn run() {
             printers::rename_printer,
             printers::print_test,
             printers::print_test_tcp,
+            printers::test_usb_printer,
             printers::add_network_printer,
             printers::add_usb_printer,
             printers::clear_print_queue,

@@ -38,6 +38,32 @@ impl PrinterStrategy for MacStrategy {
         }
     }
 
+    fn test_usb_printer(&self, port: &str, size: &str) -> Result<String, String> {
+        let width = if size == "58mm" { 32usize } else { 48 };
+        let content = format!("{}\n  PRINTER MONITOR - PRUEBA\n{}\n\n\n", "=".repeat(width), "=".repeat(width));
+        let uri = format!("usb://{port}");
+        let temp = "__pm_test__";
+        let _ = Command::new("lpadmin")
+            .args(["-p", temp, "-E", "-v", &uri, "-m", "drv:///sample.drv/generic.ppd"])
+            .output();
+        let out = Command::new("lp")
+            .args(["-d", temp, "-"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut c| {
+                use std::io::Write;
+                if let Some(stdin) = c.stdin.as_mut() { let _ = stdin.write_all(content.as_bytes()); }
+                c.wait_with_output()
+            })
+            .map_err(|e| e.to_string())?;
+        let _ = Command::new("lpadmin").args(["-x", temp]).output();
+        if out.status.success() {
+            Ok("Prueba enviada".to_string())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).to_string())
+        }
+    }
+
     fn remove_printer(&self, queue_name: &str) -> Result<String, String> {
         let out = Command::new("lpadmin")
             .args(["-x", queue_name])

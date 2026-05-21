@@ -1,7 +1,9 @@
 use crate::guards::*;
 use crate::settings::{
-    delete_custom_printer, get_custom_printers, insert_custom_printer,
+    delete_custom_printer, get_custom_printer, get_custom_printers, insert_custom_printer,
+    update_custom_printer_address,
 };
+use crate::serial::resolve_usb_port;
 use crate::strategy::{get_strategy, PrinterInfo};
 
 #[tauri::command]
@@ -32,8 +34,47 @@ pub fn rename_printer(printer_name: String, new_name: String) -> Result<String, 
 
 #[tauri::command]
 pub fn print_test(printer_name: String, size: String) -> Result<String, String> {
-    guard_printer_exists_os(&printer_name).map_err(String::from)?;
-    get_strategy().print_test(&printer_name, &size)
+    // Impresoras del SO: se imprimen por cola del sistema.
+    if guard_printer_exists_os(&printer_name).is_ok() {
+        return get_strategy().print_test(&printer_name, &size);
+    }
+
+    // Impresoras registradas en la app: resolver según tipo de conexión.
+    let Some(cp) = get_custom_printer(&printer_name).map_err(|e| e.to_string())? else {
+        return Err(format!("La impresora '{printer_name}' no existe en el SO ni en la app."));
+    };
+
+    match cp.connection_type.as_str() {
+        "network" => {
+            let ip = cp
+                .address
+                .split(':')
+                .next()
+                .ok_or_else(|| "Dirección TCP inválida".to_string())?
+                .to_string();
+            guard_valid_ip(&ip).map_err(String::from)?;
+            guard_port_reachable(&ip, 9100).map_err(String::from)?;
+            let content = build_test_escpos(&size);
+            send_escpos_tcp(&ip, 9100, &content)
+        }
+        "usb_app" => {
+            let Some(port) = resolve_usb_port(&cp.address) else {
+                return Err("No se encontró ningún puerto USB disponible para esta impresora.".to_string());
+            };
+            let result = get_strategy().test_usb_printer(&port, &size)?;
+            if port != cp.address {
+                let _ = update_custom_printer_address(&cp.alias, &port);
+            }
+            Ok(result)
+        }
+        // Compatibilidad con registros anteriores y modo sistema.
+        "usb_system" | "usb_direct" => {
+            let port = cp.address;
+            guard_usb_port_exists(&port).map_err(String::from)?;
+            get_strategy().test_usb_printer(&port, &size)
+        }
+        _ => Err(format!("Tipo de conexión no soportado: {}", cp.connection_type)),
+    }
 }
 
 #[tauri::command]
@@ -56,12 +97,30 @@ pub fn add_network_printer(ip: String, name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn add_usb_printer(port: String, name: String) -> Result<String, String> {
+pub fn test_usb_printer(port: String, size: String) -> Result<String, String> {
+    guard_usb_port_exists(&port).map_err(String::from)?;
+    get_strategy().test_usb_printer(&port, &size)
+}
+
+#[tauri::command]
+pub fn add_usb_printer(port: String, name: String, mode: String) -> Result<String, String> {
     guard_non_empty_name(&name).map_err(String::from)?;
     guard_usb_port_exists(&port).map_err(String::from)?;
     guard_alias_unique(&name).map_err(String::from)?;
-    insert_custom_printer(&name, "usb_direct", &port).map_err(|e| e.to_string())?;
-    get_strategy().install_usb(&port, &name)
+
+    match mode.as_str() {
+        // Registra en SO para uso global del equipo.
+        "system" => {
+            insert_custom_printer(&name, "usb_system", &port).map_err(|e| e.to_string())?;
+            get_strategy().install_usb(&port, &name)
+        }
+        // Solo app: no instala cola fija, usa resolución de puerto en cada impresión.
+        "app" => {
+            insert_custom_printer(&name, "usb_app", &port).map_err(|e| e.to_string())?;
+            Ok(format!("Impresora USB '{name}' registrada en modo app."))
+        }
+        _ => Err("Modo USB inválido. Usa 'system' o 'app'.".to_string()),
+    }
 }
 
 #[tauri::command]
