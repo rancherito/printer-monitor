@@ -74,11 +74,8 @@
 
             @if (renameTarget() !== printer.queue_name) {
               <div class="printer-actions" role="group" [attr.aria-label]="'Acciones para ' + printer.name">
-                <cd-button size="sm" variant="secondary" (clicked)="printers.printTest(printer.queue_name, '58mm')">58mm</cd-button>
-                <cd-button size="sm" variant="secondary" (clicked)="printers.printTest(printer.queue_name, '80mm')">80mm</cd-button>
-                <cd-button size="sm" variant="ghost" (clicked)="printers.printTestPdfInternal(printer.queue_name, '50mm')">PDF50</cd-button>
-                <cd-button size="sm" variant="ghost" (clicked)="printers.printTestPdfInternal(printer.queue_name, '80mm')">PDF80</cd-button>
-                <cd-button size="sm" variant="ghost" (clicked)="printers.printTestA4Pdf(printer.queue_name, '50mm')">A4→50</cd-button>
+                <cd-button size="sm" variant="secondary" (clicked)="printers.printTestA4Pdf(printer.queue_name, '50mm')">50mm</cd-button>
+                <cd-button size="sm" variant="secondary" (clicked)="printers.printTestA4Pdf(printer.queue_name, '80mm')">80mm</cd-button>
                 <cd-button size="sm" variant="ghost" (clicked)="printers.clearQueue(printer.queue_name)">
                   <span aria-hidden="true">🗑</span> Cola
                 </cd-button>
@@ -124,8 +121,8 @@
             </div>
             <span class="app-printer__addr">{{ printer.address }}</span>
             <div class="printer-actions" role="group" [attr.aria-label]="'Acciones para ' + printer.name">
-              <cd-button size="sm" variant="secondary" (clicked)="printers.printTest(printer.queue_name, '50mm')">50mm</cd-button>
-              <cd-button size="sm" variant="secondary" (clicked)="printers.printTest(printer.queue_name, '80mm')">80mm</cd-button>
+              <cd-button size="sm" variant="secondary" (clicked)="printers.printTestA4Pdf(printer.queue_name, '50mm')">50mm</cd-button>
+              <cd-button size="sm" variant="secondary" (clicked)="printers.printTestA4Pdf(printer.queue_name, '80mm')">80mm</cd-button>
               <cd-button size="sm" variant="danger" (clicked)="printers.removeCustomPrinter(printer.name)">
                 <span aria-hidden="true">✕</span>
               </cd-button>
