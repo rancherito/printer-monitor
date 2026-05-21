@@ -21,9 +21,12 @@ fn open_db() -> Result<Connection> {
 }
 
 fn dirs_path() -> std::path::PathBuf {
-    let mut p = std::env::temp_dir();
-    p.push("printer_monitor.db");
-    p
+    // Usar el directorio de datos del usuario en lugar de temp (que puede limpiarse).
+    let base = dirs::data_local_dir()
+        .unwrap_or_else(std::env::temp_dir);
+    let dir = base.join("printer-monitor");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("printer_monitor.db")
 }
 
 pub fn get_custom_printer_aliases() -> Result<Vec<String>> {

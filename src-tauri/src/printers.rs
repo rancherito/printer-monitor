@@ -1,4 +1,5 @@
 use crate::guards::*;
+use crate::api_server;
 use crate::settings::{
     delete_custom_printer, get_custom_printer, get_custom_printers, insert_custom_printer,
     update_custom_printer_address,
@@ -9,9 +10,13 @@ use crate::strategy::{get_strategy, PrinterInfo};
 #[tauri::command]
 pub fn get_printers() -> Vec<PrinterInfo> {
     let mut list = get_strategy().list_printers();
-    // Agregar impresoras registradas por la app
+    // Agregar solo impresoras realmente gestionadas por la app.
+    // Las USB modo sistema viven en la lista del SO para evitar duplicidad visual.
     let app_printers = get_custom_printers().unwrap_or_default();
     for cp in app_printers {
+        if cp.connection_type == "usb_system" || cp.connection_type == "usb_direct" {
+            continue;
+        }
         list.push(PrinterInfo {
             name: cp.alias.clone(),
             queue_name: cp.alias,
@@ -61,11 +66,11 @@ pub fn print_test(printer_name: String, size: String) -> Result<String, String> 
             let Some(port) = resolve_usb_port(&cp.address) else {
                 return Err("No se encontró ningún puerto USB disponible para esta impresora.".to_string());
             };
-            let result = get_strategy().test_usb_printer(&port, &size)?;
             if port != cp.address {
                 let _ = update_custom_printer_address(&cp.alias, &port);
             }
-            Ok(result)
+            let data = build_test_escpos(&size);
+            crate::escpos_print::send_escpos_to_port(&port, &data)
         }
         // Compatibilidad con registros anteriores y modo sistema.
         "usb_system" | "usb_direct" => {
@@ -75,6 +80,32 @@ pub fn print_test(printer_name: String, size: String) -> Result<String, String> 
         }
         _ => Err(format!("Tipo de conexión no soportado: {}", cp.connection_type)),
     }
+}
+
+#[tauri::command]
+pub fn print_test_pdf_internal(printer_name: String, size: String) -> Result<String, String> {
+    // Impresoras del SO: ruta GDI/PDFium→PNG→PrintDocument
+    if guard_printer_exists_os(&printer_name).is_ok() {
+        return api_server::print_internal_test_pdf(&printer_name, &size);
+    }
+
+    // Impresoras App: generar PDF de prueba y enviarlo como ESC/POS
+    let Some(cp) = get_custom_printer(&printer_name).map_err(|e| e.to_string())? else {
+        return Err(format!("La impresora '{printer_name}' no existe en el SO ni en la app."));
+    };
+
+    if cp.connection_type == "network" || cp.connection_type == "usb_app" {
+        let pdf_bytes = api_server::generate_test_pdf_bytes(&size);
+        return api_server::print_pdf_bytes_job(&pdf_bytes, &printer_name, &size);
+    }
+
+    Err(format!("Tipo de conexión no soportado para PDF: {}", cp.connection_type))
+}
+
+#[tauri::command]
+pub fn print_test_a4_pdf(printer_name: String, size: String) -> Result<String, String> {
+    let pdf = api_server::generate_a4_test_pdf_bytes();
+    api_server::print_pdf_bytes_job(&pdf, &printer_name, &size)
 }
 
 #[tauri::command]
@@ -106,16 +137,15 @@ pub fn test_usb_printer(port: String, size: String) -> Result<String, String> {
 pub fn add_usb_printer(port: String, name: String, mode: String) -> Result<String, String> {
     guard_non_empty_name(&name).map_err(String::from)?;
     guard_usb_port_exists(&port).map_err(String::from)?;
-    guard_alias_unique(&name).map_err(String::from)?;
 
     match mode.as_str() {
-        // Registra en SO para uso global del equipo.
+        // Modo sistema: instalar cola del SO, no duplicar en custom_printers.
         "system" => {
-            insert_custom_printer(&name, "usb_system", &port).map_err(|e| e.to_string())?;
             get_strategy().install_usb(&port, &name)
         }
         // Solo app: no instala cola fija, usa resolución de puerto en cada impresión.
         "app" => {
+            guard_alias_unique(&name).map_err(String::from)?;
             insert_custom_printer(&name, "usb_app", &port).map_err(|e| e.to_string())?;
             Ok(format!("Impresora USB '{name}' registrada en modo app."))
         }
@@ -138,7 +168,7 @@ pub fn remove_custom_printer(alias: String) -> Result<String, String> {
 // ─── ESC/POS helpers ──────────────────────────────────────────────────────────
 
 fn build_test_escpos(size: &str) -> Vec<u8> {
-    let width = if size == "58mm" { 32usize } else { 48 };
+    let width = match size { "50mm" | "58mm" => 32usize, _ => 48 };
     let mut data = Vec::new();
     data.extend_from_slice(b"\x1b@"); // init
     data.extend_from_slice("=".repeat(width).as_bytes());

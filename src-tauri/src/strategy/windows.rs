@@ -17,62 +17,60 @@ impl PrinterStrategy for WindowsStrategy {
     }
 
     fn install_network(&self, ip: &str, name: &str) -> Result<String, String> {
+        let esc_ip   = ps_escape_arg(ip);
+        let esc_name = ps_escape_arg(name);
         let script = format!(
-            "Add-PrinterPort -Name 'IP_{ip}' -PrinterHostAddress '{ip}'; \
-             Add-Printer -Name '{name}' -PortName 'IP_{ip}' -DriverName 'Generic / Text Only'"
+            "Add-PrinterPort -Name 'IP_{esc_ip}' -PrinterHostAddress '{esc_ip}'; \
+             Add-Printer -Name '{esc_name}' -PortName 'IP_{esc_ip}' -DriverName 'Generic / Text Only'"
         );
         run_ps(&script)
     }
 
     fn install_usb(&self, port: &str, name: &str) -> Result<String, String> {
+        let esc_port = ps_escape_arg(port);
+        let esc_name = ps_escape_arg(name);
         let script = format!(
-            "Add-Printer -Name '{name}' -PortName '{port}' -DriverName 'Generic / Text Only'"
+            "Add-Printer -Name '{esc_name}' -PortName '{esc_port}' -DriverName 'Generic / Text Only'"
         );
         run_ps(&script)
     }
 
     fn test_usb_printer(&self, port: &str, size: &str) -> Result<String, String> {
-        let width = if size == "58mm" { 32usize } else { 48 };
-        let sep = "=".repeat(width);
-        let content = format!("{sep}\\n  PRINTER MONITOR - PRUEBA  \\n{sep}\\n\\n\\n");
-        // Validar el ciclo completo y propagar errores reales al frontend.
+        let esc_port = ps_escape_arg(port);
+        // Solo validar que el puerto existe — la impresión real va por PDF.
         let script = format!(
             "$ErrorActionPreference='Stop'; \
-             $t='__pm_test__'; \
-             try {{ \
-                 if (-not (Get-PrinterPort -Name '{port}' -ErrorAction SilentlyContinue)) {{ throw 'Puerto no encontrado: {port}' }}; \
-                 if (-not (Get-PrinterDriver -Name 'Generic / Text Only' -ErrorAction SilentlyContinue)) {{ throw 'Driver Generic / Text Only no instalado en Windows' }}; \
-                 if (Get-Printer -Name $t -ErrorAction SilentlyContinue) {{ Remove-Printer -Name $t -ErrorAction Stop }}; \
-                 Add-Printer -Name $t -PortName '{port}' -DriverName 'Generic / Text Only' -ErrorAction Stop | Out-Null; \
-                 '{content}' | Out-Printer -Name $t -ErrorAction Stop; \
-                 Start-Sleep -Milliseconds 500; \
-                 Write-Output 'OK:spooled'; \
-             }} finally {{ \
-                 if (Get-Printer -Name $t -ErrorAction SilentlyContinue) {{ Remove-Printer -Name $t -ErrorAction SilentlyContinue }} \
-             }}"
+             if (-not (Get-PrinterPort -Name '{esc_port}' -ErrorAction SilentlyContinue)) {{ \
+                 throw 'Puerto no encontrado: {esc_port}' \
+             }}; \
+             if (-not (Get-PrinterDriver -Name 'Generic / Text Only' -ErrorAction SilentlyContinue)) {{ \
+                 throw 'Driver Generic / Text Only no instalado en Windows' \
+             }}; \
+             Write-Output 'OK:port_validated'"
         );
-        run_ps(&script)
+        run_ps(&script)?;
+        Ok(format!("Puerto {port} validado [{size}]"))
     }
 
     fn remove_printer(&self, queue_name: &str) -> Result<String, String> {
-        run_ps(&format!("Remove-Printer -Name '{queue_name}'"))
+        let esc = ps_escape_arg(queue_name);
+        run_ps(&format!("Remove-Printer -Name '{esc}'"))
     }
 
     fn rename_printer(&self, queue_name: &str, new_name: &str) -> Result<String, String> {
-        run_ps(&format!("Rename-Printer -Name '{queue_name}' -NewName '{new_name}'"))
+        let esc_queue   = ps_escape_arg(queue_name);
+        let esc_newname = ps_escape_arg(new_name);
+        run_ps(&format!("Rename-Printer -Name '{esc_queue}' -NewName '{esc_newname}'"))
     }
 
     fn print_test(&self, queue_name: &str, size: &str) -> Result<String, String> {
-        let content = format!("{}\nPAGINA DE PRUEBA\n{}\n", "=".repeat(32), "=".repeat(32));
-        let _ = size;
-        let script = format!(
-            "'{content}' | Out-Printer -Name '{queue_name}'"
-        );
-        run_ps(&script)
+        // Redirigir siempre a la ruta PDF para controlar el ancho de papel.
+        crate::api_server::print_internal_test_pdf(queue_name, size)
     }
 
     fn clear_queue(&self, queue_name: &str) -> Result<String, String> {
-        run_ps(&format!("Get-PrintJob -PrinterName '{queue_name}' | Remove-PrintJob"))
+        let esc = ps_escape_arg(queue_name);
+        run_ps(&format!("Get-PrintJob -PrinterName '{esc}' | Remove-PrintJob"))
     }
 }
 
@@ -91,6 +89,16 @@ fn run_ps_output(script: &str) -> Result<Output, String> {
         .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script])
         .output()
         .map_err(|e| e.to_string())
+}
+
+/// Escapa comillas simples y elimina caracteres de control para interpolación
+/// segura dentro de strings delimitados por '' en PowerShell.
+fn ps_escape_arg(input: &str) -> String {
+    input
+        .replace('\'', "''")
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect()
 }
 
 fn parse_powershell_json(json: &str) -> Vec<PrinterInfo> {

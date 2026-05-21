@@ -6,6 +6,7 @@ mod network;
 mod system;
 mod settings;
 mod api_server;
+mod escpos_print;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -29,6 +30,8 @@ pub fn run() {
             printers::get_printers,
             printers::rename_printer,
             printers::print_test,
+            printers::print_test_pdf_internal,
+            printers::print_test_a4_pdf,
             printers::print_test_tcp,
             printers::test_usb_printer,
             printers::add_network_printer,

@@ -20,6 +20,14 @@ export class TauriService {
     return invoke<string>('print_test', { printerName: queueName, size });
   }
 
+  printTestPdfInternal(queueName: string, size: string) {
+    return invoke<string>('print_test_pdf_internal', { printerName: queueName, size });
+  }
+
+  printTestA4Pdf(queueName: string, size: string) {
+    return invoke<string>('print_test_a4_pdf', { printerName: queueName, size });
+  }
+
   printTestTcp(ip: string, size: string) {
     return invoke<string>('print_test_tcp', { ip, size });
   }

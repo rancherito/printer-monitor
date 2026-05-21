@@ -70,6 +70,22 @@ export class PrintersService {
     }
   }
 
+  async printTestPdfInternal(queueName: string, size: string): Promise<void> {
+    try {
+      await this.tauri.printTestPdfInternal(queueName, size);
+    } catch (e) {
+      this.error.set(String(e));
+    }
+  }
+
+  async printTestA4Pdf(queueName: string, size: string): Promise<void> {
+    try {
+      await this.tauri.printTestA4Pdf(queueName, size);
+    } catch (e) {
+      this.error.set(String(e));
+    }
+  }
+
   async clearQueue(queueName: string): Promise<void> {
     try {
       await this.tauri.clearPrintQueue(queueName);
