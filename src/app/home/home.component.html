@@ -74,7 +74,7 @@
 
             @if (renameTarget() !== printer.queue_name) {
               <div class="printer-actions" role="group" [attr.aria-label]="'Acciones para ' + printer.name">
-                <cd-button size="sm" variant="secondary" (clicked)="printers.printTestA4Pdf(printer.queue_name, '50mm')">50mm</cd-button>
+                <cd-button size="sm" variant="secondary" (clicked)="printers.printTestA4Pdf(printer.queue_name, '58mm')">58mm</cd-button>
                 <cd-button size="sm" variant="secondary" (clicked)="printers.printTestA4Pdf(printer.queue_name, '80mm')">80mm</cd-button>
                 <cd-button size="sm" variant="ghost" (clicked)="printers.clearQueue(printer.queue_name)">
                   <span aria-hidden="true">🗑</span> Cola
@@ -121,8 +121,8 @@
             </div>
             <span class="app-printer__addr">{{ printer.address }}</span>
             <div class="printer-actions" role="group" [attr.aria-label]="'Acciones para ' + printer.name">
-              <cd-button size="sm" variant="secondary" (clicked)="printers.printTestA4Pdf(printer.queue_name, '50mm')">50mm</cd-button>
-              <cd-button size="sm" variant="secondary" (clicked)="printers.printTestA4Pdf(printer.queue_name, '80mm')">80mm</cd-button>
+              <cd-button size="sm" variant="secondary" (clicked)="printers.printAppTestPdf(printer.queue_name, '58mm')">58mm</cd-button>
+              <cd-button size="sm" variant="secondary" (clicked)="printers.printAppTestPdf(printer.queue_name, '80mm')">80mm</cd-button>
               <cd-button size="sm" variant="danger" (clicked)="printers.removeCustomPrinter(printer.name)">
                 <span aria-hidden="true">✕</span>
               </cd-button>
@@ -131,6 +131,10 @@
         </cd-card>
       }
     </div>
+
+    @if (printers.appError()) {
+      <p class="error-msg" role="alert">{{ printers.appError() }}</p>
+    }
 
     <div class="panel-sidebar__footer">
       <cd-button variant="primary" size="sm" (clicked)="printers.openTcpDialog(system.localIp())">+ TCP/IP</cd-button>
@@ -202,6 +206,15 @@
               [ngModel]="printers.tcpIpInput()"
               (ngModelChange)="printers.tcpIpInput.set($event); printers.tcpTestStatus.set('idle')"
             />
+          </div>
+
+          <!-- Tamaño de papel -->
+          <div class="dialog__field">
+            <span class="dialog__label">Tamaño de papel</span>
+            <div class="printer-actions">
+              <cd-button size="sm" [variant]="printers.tcpSize() === '58mm' ? 'primary' : 'ghost'" (clicked)="printers.tcpSize.set('58mm')">58mm</cd-button>
+              <cd-button size="sm" [variant]="printers.tcpSize() === '80mm' ? 'primary' : 'ghost'" (clicked)="printers.tcpSize.set('80mm')">80mm</cd-button>
+            </div>
           </div>
 
           <!-- Test print -->
@@ -344,6 +357,15 @@
                 <span class="mode-selector__title">Solo en esta app</span>
                 <span class="mode-selector__desc">No crea cola fija; la app intenta recuperar el puerto si cambia al reconectar USB.</span>
               </button>
+            </div>
+          </div>
+
+          <!-- Tamaño de papel -->
+          <div class="dialog__field">
+            <span class="dialog__label">Tamaño de papel</span>
+            <div class="printer-actions">
+              <cd-button size="sm" [variant]="printers.usbSize() === '58mm' ? 'primary' : 'ghost'" (clicked)="printers.usbSize.set('58mm')">58mm</cd-button>
+              <cd-button size="sm" [variant]="printers.usbSize() === '80mm' ? 'primary' : 'ghost'" (clicked)="printers.usbSize.set('80mm')">80mm</cd-button>
             </div>
           </div>
 

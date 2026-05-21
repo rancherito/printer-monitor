@@ -46,6 +46,12 @@ export class PrintersService {
   readonly usbTestStatus = signal<TestStatus>('idle');
   readonly usbTestMsg = signal<string | null>(null);
 
+  readonly tcpSize = signal<'58mm' | '80mm'>('58mm');
+  readonly usbSize = signal<'58mm' | '80mm'>('58mm');
+
+  // Error separado para operaciones de impresoras App (panel derecho)
+  readonly appError = signal<string | null>(null);
+
   readonly osPrinters = computed(() => this.printers().filter(p => p.source === 'os'));
   readonly appPrinters = computed(() => this.printers().filter(p => p.source === 'app'));
 
@@ -86,6 +92,15 @@ export class PrintersService {
     }
   }
 
+  async printAppTestPdf(queueName: string, size: string): Promise<void> {
+    this.appError.set(null);
+    try {
+      await this.tauri.printTestA4Pdf(queueName, size);
+    } catch (e) {
+      this.appError.set(String(e));
+    }
+  }
+
   async clearQueue(queueName: string): Promise<void> {
     try {
       await this.tauri.clearPrintQueue(queueName);
@@ -122,6 +137,7 @@ export class PrintersService {
     this.tcpResult.set(null);
     this.tcpTestStatus.set('idle');
     this.tcpTestMsg.set(null);
+    this.tcpSize.set('58mm');
     this.tcpDialogOpen.set(true);
     void this.scanTcpIpPrinters(subnet);
   }
@@ -152,6 +168,8 @@ export class PrintersService {
 
     try {
       await this.tauri.addNetworkPrinter(ip, this.tcpAlias());
+      try { await this.tauri.printTestTcp(ip, this.tcpSize()); }
+      catch (e) { this.appError.set(`Prueba ${this.tcpAlias()}: ${String(e)}`); }
       await this.loadPrinters();
       this.closeTcpDialog();
     } catch (e) {
@@ -165,7 +183,7 @@ export class PrintersService {
     this.tcpTestStatus.set('testing');
     this.tcpTestMsg.set(null);
     try {
-      await this.tauri.printTestTcp(ip, '58mm');
+      await this.tauri.printTestTcp(ip, this.tcpSize());
       this.tcpTestStatus.set('ok');
       this.tcpTestMsg.set('Impresión enviada correctamente.');
     } catch (e) {
@@ -182,6 +200,7 @@ export class PrintersService {
     this.usbResult.set(null);
     this.usbTestStatus.set('idle');
     this.usbTestMsg.set(null);
+    this.usbSize.set('58mm');
     try {
       const ports = await this.tauri.getSerialPorts();
       this.usbPorts.set(ports);
@@ -208,7 +227,7 @@ export class PrintersService {
     this.usbTestStatus.set('testing');
     this.usbTestMsg.set(null);
     try {
-      await this.tauri.testUsbPrinter(port, '58mm');
+      await this.tauri.testUsbPrinter(port, this.usbSize());
       this.usbTestStatus.set('ok');
       this.usbTestMsg.set('Impresión enviada correctamente.');
     } catch (e) {
@@ -223,8 +242,20 @@ export class PrintersService {
     const nameErr = guardNonEmpty(this.usbAlias());
     if (nameErr) { this.usbResult.set(nameErr); return; }
 
+    const port = this.usbSelectedPort()!;
+    const alias = this.usbAlias();
+    const mode  = this.usbMode();
+    const size  = this.usbSize();
+
     try {
-      await this.tauri.addUsbPrinter(this.usbSelectedPort()!, this.usbAlias(), this.usbMode());
+      await this.tauri.addUsbPrinter(port, alias, mode);
+      try {
+        if (mode === 'system') {
+          await this.tauri.printTestPdfInternal(alias, size);
+        } else {
+          await this.tauri.testUsbPrinter(port, size);
+        }
+      } catch (e) { this.appError.set(`Prueba ${alias}: ${String(e)}`); }
       await this.loadPrinters();
       this.closeUsbDialog();
     } catch (e) {

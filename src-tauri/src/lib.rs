@@ -8,6 +8,12 @@ mod settings;
 mod api_server;
 mod escpos_print;
 
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager, WindowEvent,
+};
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -19,9 +25,63 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
             // Iniciar servidor HTTP interno en background
             tauri::async_runtime::spawn(api_server::start());
+
+            // Activar autoarranque la primera vez que se ejecuta la app
+            if system::is_first_launch() {
+                let _ = system::set_autostart(true);
+                system::mark_initialized();
+            }
+
+            // ── Bandeja del sistema ──────────────────────────────────────────
+            let show_i = MenuItem::with_id(app, "show", "Abrir",  true, None::<&str>)?;
+            let quit_i  = MenuItem::with_id(app, "quit", "Salir", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+            let icon = tauri::include_image!("icons/32x32.png");
+
+            TrayIconBuilder::<tauri::Wry>::new()
+                .icon(icon)
+                .tooltip("Printer Monitor")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    // Clic izquierdo sobre el ícono → mostrar ventana
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
             Ok(())
+        })
+        // Cerrar ventana → ocultar a bandeja (la app sigue corriendo)
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                window.hide().unwrap();
+                api.prevent_close();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             system::get_system_info,

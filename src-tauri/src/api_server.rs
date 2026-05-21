@@ -1,4 +1,4 @@
-use axum::{extract::Json, http::{HeaderMap, StatusCode}, routing::post, Router};
+use axum::{extract::Json, http::{HeaderMap, StatusCode}, routing::{get, post}, Router};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use once_cell::sync::Lazy;
@@ -13,10 +13,6 @@ static API_TOKEN: Lazy<String> = Lazy::new(|| {
         .unwrap_or(0);
     format!("{:x}", ts ^ 0xDEAD_CAFE_1337_u128)
 });
-
-pub fn get_api_token() -> &'static str {
-    &API_TOKEN
-}
 
 #[cfg(target_os = "windows")]
 use pdfium_render::prelude::*;
@@ -34,11 +30,26 @@ struct PrintResponse {
     message: String,
 }
 
+#[derive(Serialize)]
+struct HealthResponse {
+    ok: bool,
+    version: &'static str,
+}
+
 pub async fn start() {
-    let app = Router::new().route("/api/print", post(handle_print));
+    let app = Router::new()
+        .route("/health", get(handle_health))
+        .route("/api/print", post(handle_print));
     let listener = TcpListener::bind("127.0.0.1:8001").await.unwrap();
     log::info!("API server escuchando en http://127.0.0.1:8001");
     axum::serve(listener, app).await.unwrap();
+}
+
+async fn handle_health() -> (StatusCode, Json<HealthResponse>) {
+    (
+        StatusCode::OK,
+        Json(HealthResponse { ok: true, version: env!("CARGO_PKG_VERSION") }),
+    )
 }
 
 async fn handle_print(headers: HeaderMap, Json(req): Json<PrintRequest>) -> (StatusCode, Json<PrintResponse>) {
@@ -66,13 +77,8 @@ pub fn print_pdf_job(pdf_b64: &str, printer_name: &str, width: &str) -> Result<S
 }
 
 pub fn print_internal_test_pdf(printer_name: &str, width: &str) -> Result<String, String> {
-    let pdf = generate_internal_test_pdf(width);
+    let pdf = generate_test_pdf_bytes(width);
     print_pdf_bytes_job(&pdf, printer_name, width)
-}
-
-/// Expone el generador de PDF de prueba para uso externo.
-pub fn generate_test_pdf_bytes(width: &str) -> Vec<u8> {
-    generate_internal_test_pdf(width)
 }
 
 pub fn print_pdf_bytes_job(pdf_bytes: &[u8], printer_name: &str, width: &str) -> Result<String, String> {
@@ -107,22 +113,92 @@ pub fn print_pdf_bytes_job(pdf_bytes: &[u8], printer_name: &str, width: &str) ->
 
 #[cfg(target_os = "windows")]
 fn print_pdf_windows_so(pdf_bytes: &[u8], printer_name: &str, width: &str) -> Result<String, String> {
-    // Pipeline: PDF → ESC/POS (PDFium + Floyd-Steinberg) → raw Windows spooler
-    // Motivo: las impresoras térmicas usan driver "Generic / Text Only" que no
-    // soporta comandos GDI. Enviamos ESC/POS crudo al spooler con datatype RAW.
-    let escpos = crate::escpos_print::pdf_to_escpos(pdf_bytes, width)?;
-    crate::escpos_print::send_raw_to_windows_queue(printer_name, &escpos)?;
-    Ok(format!("PDF impreso en '{printer_name}' [{width}]"))
+    // Impresoras térmicas (driver "Generic / Text Only") → ESC/POS raw al spooler.
+    // Impresoras estándar (PDF virtual, laser, etc.) → GDI directo al printer DC:
+    // el pipeline nativo activa el diálogo de guardado para "Microsoft Print to PDF".
+    if is_thermal_escpos_printer(printer_name) {
+        let escpos = crate::escpos_print::pdf_to_escpos(pdf_bytes, width)?;
+        crate::escpos_print::send_raw_to_windows_queue(printer_name, &escpos)?;
+        Ok(format!("PDF impreso (ESC/POS) en '{printer_name}' [{width}]"))
+    } else {
+        crate::escpos_print::pdf_to_gdi_printer(pdf_bytes, printer_name, width)
+    }
+}
+
+/// Devuelve `true` si la impresora usa driver ESC/POS (Generic / Text Only).
+/// Consulta el driver via Win32; si falla, aplica heurística por nombre.
+#[cfg(target_os = "windows")]
+fn is_thermal_escpos_printer(printer_name: &str) -> bool {
+    match get_printer_driver_name(printer_name) {
+        Some(driver) => {
+            let d = driver.to_ascii_lowercase();
+            d.contains("generic") || d.contains("text only")
+        }
+        // No se pudo leer el driver: heurística por nombre
+        None => {
+            let n = printer_name.to_ascii_lowercase();
+            !n.contains("pdf") && !n.contains("xps")
+                && !n.contains("onenote") && !n.contains("fax")
+        }
+    }
+}
+
+/// Lee el nombre del driver de una impresora del SO via Win32 GetPrinterW (level 2).
+#[cfg(target_os = "windows")]
+fn get_printer_driver_name(printer_name: &str) -> Option<String> {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Graphics::Printing::{
+        ClosePrinter, GetPrinterW, OpenPrinterW, PRINTER_INFO_2W,
+    };
+    use windows::core::PCWSTR;
+
+    let name_w: Vec<u16> = printer_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut handle = HANDLE::default();
+
+    unsafe {
+        if OpenPrinterW(PCWSTR(name_w.as_ptr()), &mut handle, None).is_err() {
+            return None;
+        }
+
+        // Primera llamada: obtener tamaño del buffer requerido
+        let mut needed: u32 = 0;
+        let _ = GetPrinterW(handle, 2, None, &mut needed as *mut u32);
+        if needed == 0 {
+            let _ = ClosePrinter(handle);
+            return None;
+        }
+
+        // Buffer alineado a 8 bytes para que PRINTER_INFO_2W sea accesible
+        let aligned_words = (needed as usize + 7) / 8;
+        let mut buf: Vec<u64> = vec![0u64; aligned_words];
+        let buf_slice = std::slice::from_raw_parts_mut(
+            buf.as_mut_ptr() as *mut u8,
+            needed as usize,
+        );
+        let result = GetPrinterW(handle, 2, Some(buf_slice), &mut needed as *mut u32);
+        let _ = ClosePrinter(handle);
+
+        if result.is_err() {
+            return None;
+        }
+
+        let info = &*(buf.as_ptr() as *const PRINTER_INFO_2W);
+        let drv_ptr = info.pDriverName.0 as *const u16;
+        if drv_ptr.is_null() {
+            return None;
+        }
+
+        let mut len = 0usize;
+        while *drv_ptr.add(len) != 0 {
+            len += 1;
+        }
+        Some(String::from_utf16_lossy(std::slice::from_raw_parts(drv_ptr, len)))
+    }
 }
 
 /// Carga PDFium. Función pública para ser usada desde otros módulos (ej. escpos_print).
 #[cfg(target_os = "windows")]
 pub fn load_pdfium() -> Result<Pdfium, String> {
-    init_pdfium()
-}
-
-#[cfg(target_os = "windows")]
-fn init_pdfium() -> Result<Pdfium, String> {
     let dll_path = find_pdfium_dll().ok_or_else(|| {
         "No se encontró pdfium.dll. Para incrustarlo en la app colócalo en 'src-tauri/resources/pdfium.dll' y recompila. "
             .to_string()
@@ -178,13 +254,13 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("PDF base64 inválido: {e}"))
 }
 
-fn generate_internal_test_pdf(width: &str) -> Vec<u8> {
+pub fn generate_test_pdf_bytes(width: &str) -> Vec<u8> {
     // Parámetros tipográficos según ancho de papel.
     // Para 50mm: 141.73pt de ancho → fuente 7pt con margen 3pt cabe ~38 chars/línea.
     // Para 80mm: 226.77pt de ancho → fuente 9pt con margen 6pt cabe ~47 chars/línea.
     let (w_mm, font_pt, margin_x, line_h) = match width {
-        "50mm" | "58mm" => (50.0_f32, 7.0_f32, 3.0_f32, 10.0_f32),
-        _               => (80.0_f32, 9.0_f32, 6.0_f32, 13.0_f32),
+        "58mm" => (50.0_f32, 7.0_f32, 3.0_f32, 10.0_f32),
+        _      => (80.0_f32, 9.0_f32, 6.0_f32, 13.0_f32),
     };
     let h_mm = 80.0_f32;
     let w_pt = mm_to_pt(w_mm);
@@ -259,7 +335,11 @@ fn print_pdf_to_escpos_app(
             if port != cp.address {
                 let _ = crate::settings::update_custom_printer_address(&cp.alias, &port);
             }
-            crate::escpos_print::send_escpos_to_port(&port, &data)
+            if port.to_ascii_uppercase().starts_with("USB") {
+                crate::escpos_print::send_escpos_to_usb_spooler_port(&port, &data)
+            } else {
+                crate::escpos_print::send_escpos_to_port(&port, &data)
+            }
         }
         other => Err(format!("Tipo de conexión no soportado para App: {other}")),
     }
@@ -283,7 +363,7 @@ fn print_pdf_to_escpos_app(
 /// y texto a multiples tamanios, para verificar que el pipeline
 /// PDF -> PDFium -> set_target_width -> Floyd-Steinberg -> ESC/POS
 /// produce un ticket correcto al imprimir en papel termico de 50mm o 80mm.
-fn generate_a4_test_pdf() -> Vec<u8> {
+pub fn generate_a4_test_pdf_bytes() -> Vec<u8> {
     use std::fmt::Write as FmtWrite;
     let w_pt = 595.28_f32;
     let h_pt = 841.89_f32;
@@ -551,11 +631,6 @@ fn generate_a4_test_pdf() -> Vec<u8> {
     w!("ET\n");
 
     build_pdf_single_page(w_pt, h_pt, &cs)
-}
-
-/// Expone el generador del PDF A4 de prueba para uso externo (printers.rs, etc.).
-pub fn generate_a4_test_pdf_bytes() -> Vec<u8> {
-    generate_a4_test_pdf()
 }
 
 fn build_pdf_single_page(width_pt: f32, height_pt: f32, content_stream: &str) -> Vec<u8> {

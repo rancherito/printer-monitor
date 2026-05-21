@@ -63,7 +63,7 @@ fn build_app_printers() -> Vec<PrinterInfo> {
 
 // ─── Autostart helpers ────────────────────────────────────────────────────────
 
-fn get_autostart_status() -> bool {
+pub fn get_autostart_status() -> bool {
     #[cfg(target_os = "macos")]
     {
         let plist = get_launchagent_path();
@@ -88,7 +88,7 @@ fn get_autostart_status() -> bool {
     }
 }
 
-fn set_autostart(enabled: bool) -> Result<(), String> {
+pub fn set_autostart(enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let path = get_launchagent_path();
@@ -173,4 +173,25 @@ fn write_launchagent(path: &std::path::Path) -> Result<(), String> {
 fn get_xdg_autostart_path() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
     std::path::PathBuf::from(home).join(".config/autostart/printer-monitor.desktop")
+}
+
+// ─── First-launch detection ──────────────────────────────────────────────────
+
+fn initialized_flag_path() -> std::path::PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("printer-monitor")
+        .join(".initialized")
+}
+
+/// Devuelve `true` si es la primera vez que se ejecuta la app (no existe la
+/// bandera de inicialización en el directorio de datos del usuario).
+pub fn is_first_launch() -> bool {
+    !initialized_flag_path().exists()
+}
+
+/// Escribe la bandera de primera ejecución para que no vuelva a activarse el
+/// autoarranque automáticamente en lanzamientos posteriores.
+pub fn mark_initialized() {
+    let _ = std::fs::write(initialized_flag_path(), b"1");
 }

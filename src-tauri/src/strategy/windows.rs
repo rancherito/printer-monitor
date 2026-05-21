@@ -36,20 +36,14 @@ impl PrinterStrategy for WindowsStrategy {
     }
 
     fn test_usb_printer(&self, port: &str, size: &str) -> Result<String, String> {
-        let esc_port = ps_escape_arg(port);
-        // Solo validar que el puerto existe — la impresión real va por PDF.
-        let script = format!(
-            "$ErrorActionPreference='Stop'; \
-             if (-not (Get-PrinterPort -Name '{esc_port}' -ErrorAction SilentlyContinue)) {{ \
-                 throw 'Puerto no encontrado: {esc_port}' \
-             }}; \
-             if (-not (Get-PrinterDriver -Name 'Generic / Text Only' -ErrorAction SilentlyContinue)) {{ \
-                 throw 'Driver Generic / Text Only no instalado en Windows' \
-             }}; \
-             Write-Output 'OK:port_validated'"
-        );
-        run_ps(&script)?;
-        Ok(format!("Puerto {port} validado [{size}]"))
+        let pdf = crate::api_server::generate_test_pdf_bytes(size);
+        let escpos = crate::escpos_print::pdf_to_escpos(&pdf, size)?;
+        if port.to_ascii_uppercase().starts_with("USB") {
+            crate::escpos_print::send_escpos_to_usb_spooler_port(port, &escpos)?;
+        } else {
+            crate::escpos_print::send_escpos_to_port(port, &escpos)?;
+        }
+        Ok(format!("PDF de prueba enviado al puerto {port} [{size}]"))
     }
 
     fn remove_printer(&self, queue_name: &str) -> Result<String, String> {

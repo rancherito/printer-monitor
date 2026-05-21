@@ -92,8 +92,8 @@ pub fn send_escpos_tcp(ip: &str, port_num: u16, data: &[u8]) -> Result<String, S
 
 pub fn build_test_escpos(size: &str) -> Vec<u8> {
     let col = match size {
-        "50mm" | "58mm" => 32usize,
-        _ => 48,
+        "58mm" => 32usize,
+        _      => 48,
     };
     let sep = "=".repeat(col);
     let mut d: Vec<u8> = Vec::new();
@@ -135,13 +135,12 @@ pub fn pdf_to_escpos(pdf_bytes: &[u8], size: &str) -> Result<Vec<u8>, String> {
     use pdfium_render::prelude::*;
     use image::{GrayImage, Luma};
 
-    // Ancho en dots de la zona imprimible según tamaño de papel:
-    //   50mm / 58mm → 576 dots  (48mm × 12 dots/mm ≈ 576, resolución típica Epson/Bixolon)
-    //   80mm        → 832 dots  (72mm × 11.5 dots/mm ≈ 832)
-    // Nota: si tu impresora usa 203dpi (8dots/mm) cambia 576→384 o 832→576.
+    // Ancho en dots de la zona imprimible según perfil de papel (203 DPI = 8 dots/mm):
+    //   58mm papel → 48mm imprimible × 8 = 384 dots
+    //   80mm papel → 72mm imprimible × 8 = 576 dots
     let target_px = match size {
-        "50mm" | "58mm" => 576u32,
-        _ => 832u32,
+        "58mm" => 384u32,
+        _      => 576u32,
     };
 
     let pdfium = crate::api_server::load_pdfium()?;
@@ -194,6 +193,184 @@ pub fn pdf_to_escpos(pdf_bytes: &[u8], size: &str) -> Result<Vec<u8>, String> {
 pub fn pdf_to_escpos(pdf_bytes: &[u8], size: &str) -> Result<Vec<u8>, String> {
     let _ = (pdf_bytes, size);
     Err("Conversión PDF→ESC/POS aún no implementada en esta plataforma.".to_string())
+}
+
+// ─── GDI printing (impresoras estándar: PDF virtual, laser, etc.) ─────────────
+
+// windows-rs 0.58 no expone StartDocW/StartPage/EndPage/EndDoc bajo ningún
+// módulo de Win32::Graphics. Se declaran manualmente desde gdi32.dll.
+#[cfg(target_os = "windows")]
+#[repr(C)]
+#[allow(non_snake_case)]
+struct GdiDocInfoW {
+    cbSize:       i32,
+    lpszDocName:  *const u16,
+    lpszOutput:   *const u16,
+    lpszDatatype: *const u16,
+    fwType:       u32,
+}
+
+// La implementación de GdiDocInfoW usa punteros raw: requiere Send en algunos
+// contextos, pero en nuestro caso se usa localmente en un único hilo.
+#[cfg(target_os = "windows")]
+unsafe impl Send for GdiDocInfoW {}
+
+#[cfg(target_os = "windows")]
+extern "system" {
+    fn StartDocW(hdc: *mut core::ffi::c_void, lpdi: *const GdiDocInfoW) -> i32;
+    fn EndDoc(hdc: *mut core::ffi::c_void) -> i32;
+    fn StartPage(hdc: *mut core::ffi::c_void) -> i32;
+    fn EndPage(hdc: *mut core::ffi::c_void) -> i32;
+}
+
+/// Rasteriza un PDF con PDFium e imprime cada página via GDI al printer DC.
+/// Funciona con cualquier impresora estándar de Windows. Para "Microsoft Print
+/// to PDF" activa automáticamente el diálogo de guardado del SO.
+/// Escala el contenido para llenar el ancho de la página manteniendo el aspecto.
+#[cfg(target_os = "windows")]
+pub fn pdf_to_gdi_printer(pdf_bytes: &[u8], printer_name: &str, width: &str) -> Result<String, String> {
+    use pdfium_render::prelude::*;
+    use windows::core::PCWSTR;
+    use windows::Win32::Graphics::Gdi::{
+        CreateDCW, DeleteDC, GetDeviceCaps, StretchDIBits,
+        BITMAPINFO, BITMAPINFOHEADER, RGBQUAD,
+        DIB_RGB_COLORS, SRCCOPY,
+    };
+
+    let target_px: u32 = match width {
+        "50mm" | "58mm" => 576,
+        _ => 832,
+    };
+
+    let pdfium = crate::api_server::load_pdfium()?;
+    let doc = pdfium
+        .load_pdf_from_byte_vec(pdf_bytes.to_vec(), None)
+        .map_err(|e| format!("No se pudo cargar PDF: {e}"))?;
+
+    let printer_w: Vec<u16> = printer_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let docname_w: Vec<u16> = "PM-Preview\0".encode_utf16().collect();
+
+    unsafe {
+        // Crear Printer Device Context (NULL driver = usar "WINSPOOL" implícito)
+        let dc = CreateDCW(
+            PCWSTR::null(),
+            PCWSTR(printer_w.as_ptr()),
+            PCWSTR::null(),
+            None,
+        );
+        if dc == windows::Win32::Graphics::Gdi::HDC::default() {
+            return Err(format!("No se pudo crear DC para '{printer_name}'"));
+        }
+
+        // Convertir HDC a *mut c_void para las declaraciones extern manuales
+        let hdc_raw: *mut core::ffi::c_void = std::mem::transmute(dc);
+
+        // HORZRES=8, VERTRES=10 son índices estándar de GetDeviceCaps
+        let page_w = GetDeviceCaps(dc, windows::Win32::Graphics::Gdi::GET_DEVICE_CAPS_INDEX(8));
+        let page_h = GetDeviceCaps(dc, windows::Win32::Graphics::Gdi::GET_DEVICE_CAPS_INDEX(10));
+
+        let doc_info = GdiDocInfoW {
+            cbSize:       std::mem::size_of::<GdiDocInfoW>() as i32,
+            lpszDocName:  docname_w.as_ptr(),
+            lpszOutput:   std::ptr::null(),
+            lpszDatatype: std::ptr::null(),
+            fwType:       0,
+        };
+
+        if StartDocW(hdc_raw, &doc_info) <= 0 {
+            let _ = DeleteDC(dc);
+            return Err(format!("StartDocW falló para '{printer_name}'"));
+        }
+
+        for (idx, page) in doc.pages().iter().enumerate() {
+            if StartPage(hdc_raw) <= 0 {
+                let _ = EndDoc(hdc_raw);
+                let _ = DeleteDC(dc);
+                return Err(format!("StartPage falló en pág {}", idx + 1));
+            }
+
+            let bmp = page.render_with_config(
+                &PdfRenderConfig::new()
+                    .set_target_width(target_px as i32)
+                    .rotate_if_landscape(PdfPageRenderRotation::Degrees90, true),
+            );
+
+            let bitmap = match bmp {
+                Ok(b) => b,
+                Err(e) => {
+                    let _ = EndPage(hdc_raw);
+                    let _ = EndDoc(hdc_raw);
+                    let _ = DeleteDC(dc);
+                    return Err(format!("Render pág {}: {e}", idx + 1));
+                }
+            };
+
+            let rgba = bitmap.as_image().to_rgba8();
+            let (bw, bh) = rgba.dimensions();
+            let raw = rgba.as_raw();
+
+            // RGBA → BGR24 con relleno DWORD por fila (requerido por GDI StretchDIBits)
+            let row_stride = (bw as usize * 3 + 3) & !3;
+            let mut bgr = vec![0u8; row_stride * bh as usize];
+            for y in 0..bh as usize {
+                for x in 0..bw as usize {
+                    let s = (y * bw as usize + x) * 4;
+                    let d = y * row_stride + x * 3;
+                    bgr[d]     = raw[s + 2]; // B
+                    bgr[d + 1] = raw[s + 1]; // G
+                    bgr[d + 2] = raw[s];     // R
+                }
+            }
+
+            let bmi = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: bw as i32,
+                    biHeight: -(bh as i32), // negativo = top-down (origen en esquina superior izquierda)
+                    biPlanes: 1,
+                    biBitCount: 24,
+                    biCompression: 0, // BI_RGB = 0
+                    biSizeImage: 0,
+                    biXPelsPerMeter: 0,
+                    biYPelsPerMeter: 0,
+                    biClrUsed: 0,
+                    biClrImportant: 0,
+                },
+                bmiColors: [RGBQUAD { rgbBlue: 0, rgbGreen: 0, rgbRed: 0, rgbReserved: 0 }],
+            };
+
+            // Escalar para llenar el ancho de página manteniendo relación de aspecto
+            let dest_w = page_w;
+            let dest_h = ((bh as i64 * page_w as i64) / bw.max(1) as i64) as i32;
+            let dest_h = dest_h.min(page_h);
+
+            StretchDIBits(
+                dc,
+                0, 0, dest_w, dest_h,
+                0, 0, bw as i32, bh as i32,
+                Some(bgr.as_ptr() as *const core::ffi::c_void),
+                &bmi,
+                DIB_RGB_COLORS,
+                SRCCOPY,
+            );
+
+            let _ = EndPage(hdc_raw);
+        }
+
+        let _ = EndDoc(hdc_raw);
+        let _ = DeleteDC(dc);
+    }
+
+    Ok(format!("PDF enviado a '{printer_name}' via GDI"))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn pdf_to_gdi_printer(
+    _pdf_bytes: &[u8],
+    _printer_name: &str,
+    _width: &str,
+) -> Result<String, String> {
+    Err("GDI printing solo disponible en Windows.".to_string())
 }
 
 /// Dithering Floyd-Steinberg sobre imagen gris → imagen 1-bit (0=negro, 255=blanco).
@@ -256,6 +433,40 @@ fn raster_to_escpos_gsvzero(img: &image::GrayImage) -> Vec<u8> {
         }
     }
     out
+}
+
+// ─── Helper para puertos USB del spooler (USB001/USB002) ────────────────────
+
+/// Envía bytes ESC/POS a un puerto USB del spooler de Windows (USB001, USB002…).
+/// Estos puertos son virtuales: `CreateFileA("\\.\USB001")` falla con 0x80070002.
+/// La solución es crear una cola temporal con driver "Generic / Text Only",
+/// enviar via `send_raw_to_windows_queue` y eliminar la cola.
+#[cfg(target_os = "windows")]
+pub fn send_escpos_to_usb_spooler_port(port: &str, data: &[u8]) -> Result<String, String> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    const TEMP_Q: &str = "__PM_USB__";
+
+    let run_ps = |script: &str| -> Result<(), String> {
+        let out = Command::new("powershell")
+            .creation_flags(CREATE_NO_WINDOW)
+            .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).to_string()) }
+    };
+
+    let esc_port = port.replace('\'', "''");
+    let _ = run_ps(&format!("Remove-Printer -Name '{TEMP_Q}' -ErrorAction SilentlyContinue"));
+    run_ps(&format!(
+        "Add-Printer -Name '{TEMP_Q}' -PortName '{esc_port}' \
+         -DriverName 'Generic / Text Only' -ErrorAction Stop"
+    ))
+    .map_err(|e| format!("No se pudo crear cola temporal para {port}: {e}"))?;
+    let result = send_raw_to_windows_queue(TEMP_Q, data);
+    let _ = run_ps(&format!("Remove-Printer -Name '{TEMP_Q}' -ErrorAction SilentlyContinue"));
+    result
 }
 
 // ─── Raw Windows Spooler (para impresoras SO con driver Generic/Text Only) ────

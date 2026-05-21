@@ -112,8 +112,9 @@ pub fn print_test_a4_pdf(printer_name: String, size: String) -> Result<String, S
 pub fn print_test_tcp(ip: String, size: String) -> Result<String, String> {
     guard_valid_ip(&ip).map_err(String::from)?;
     guard_port_reachable(&ip, 9100).map_err(String::from)?;
-    let content = build_test_escpos(&size);
-    send_escpos_tcp(&ip, 9100, &content)
+    let pdf = api_server::generate_test_pdf_bytes(&size);
+    let escpos = crate::escpos_print::pdf_to_escpos(&pdf, &size)?;
+    send_escpos_tcp(&ip, 9100, &escpos)
 }
 
 #[tauri::command]
@@ -168,7 +169,7 @@ pub fn remove_custom_printer(alias: String) -> Result<String, String> {
 // ─── ESC/POS helpers ──────────────────────────────────────────────────────────
 
 fn build_test_escpos(size: &str) -> Vec<u8> {
-    let width = match size { "50mm" | "58mm" => 32usize, _ => 48 };
+    let width = match size { "58mm" => 32usize, _ => 48 };
     let mut data = Vec::new();
     data.extend_from_slice(b"\x1b@"); // init
     data.extend_from_slice("=".repeat(width).as_bytes());
