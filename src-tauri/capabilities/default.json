@@ -6,9 +6,6 @@
     "main"
   ],
   "permissions": [
-    "core:default",
-    "autostart:allow-enable",
-    "autostart:allow-disable",
-    "autostart:allow-is-enabled"
+    "core:default"
   ]
 }

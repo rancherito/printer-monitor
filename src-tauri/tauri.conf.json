@@ -1,13 +1,13 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "printer-monitor",
   "version": "0.1.0",
   "identifier": "com.codicore.printer-monitor",
   "build": {
     "frontendDist": "../dist/printer-monitor/browser",
     "devUrl": "http://localhost:9002",
-    "beforeDevCommand": "npm run start",
-    "beforeBuildCommand": "npm run build"
+    "beforeDevCommand": "bun run start",
+    "beforeBuildCommand": "bun run build"
   },
   "app": {
     "windows": [
@@ -15,6 +15,8 @@
         "title": "Printer Monitor",
         "width": 900,
         "height": 650,
+        "minWidth": 800,
+        "minHeight": 600,
         "resizable": true,
         "fullscreen": false
       }
@@ -23,27 +25,16 @@
       "csp": null
     }
   },
-  "plugins": {
-    "autostart": {
-      "macOSHidden": true
-    }
-  },
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": [
-      "libs/**/*"
-    ],
     "icon": [
       "icons/32x32.png",
-      "icons/64x64.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "macOS": {
-      "entitlements": "Entitlements.plist"
-    }
+    "android": {}
   }
 }
