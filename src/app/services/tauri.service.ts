@@ -71,4 +71,12 @@ export class TauriService {
   setAutostartEnabled(enabled: boolean) {
     return invoke<void>('set_autostart_enabled', { enabled });
   }
+
+  getServerPort() {
+    return invoke<number>('get_server_port');
+  }
+
+  setServerPort(port: number) {
+    return invoke<void>('set_server_port', { port });
+  }
 }

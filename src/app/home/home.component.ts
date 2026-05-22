@@ -26,6 +26,9 @@ export class HomeComponent implements OnInit {
   readonly renameTarget = signal<string | null>(null);
   readonly renameValue = signal('');
 
+  readonly editingServerPort = signal(false);
+  readonly serverPortInput = signal('');
+
   async ngOnInit(): Promise<void> {
     await this.system.loadSystemInfo();
     await this.printers.loadPrinters();
@@ -51,5 +54,21 @@ export class HomeComponent implements OnInit {
     if (!target) return;
     await this.printers.renamePrinter(target, this.renameValue());
     this.renameTarget.set(null);
+  }
+
+  openPortEditor(): void {
+    this.serverPortInput.set(String(this.system.serverPort()));
+    this.editingServerPort.set(true);
+  }
+
+  closePortEditor(): void {
+    this.editingServerPort.set(false);
+  }
+
+  async saveServerPort(): Promise<void> {
+    const port = parseInt(this.serverPortInput(), 10);
+    if (isNaN(port) || port < 1 || port > 65535) return;
+    await this.system.setServerPort(port);
+    this.editingServerPort.set(false);
   }
 }

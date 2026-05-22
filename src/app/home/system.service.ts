@@ -9,10 +9,14 @@ export class SystemService {
   readonly systemInfo = signal<SystemInfo | null>(null);
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
+  /** Puerto guardado pendiente de aplicar (requiere reinicio) */
+  readonly pendingPort = signal<number | null>(null);
 
   readonly localIp = computed(() => this.systemInfo()?.local_ip ?? '—');
   readonly isDev = computed(() => this.systemInfo()?.is_dev ?? false);
   readonly autostartEnabled = computed(() => this.systemInfo()?.autostart_enabled ?? false);
+  readonly serverPort = computed(() => this.systemInfo()?.port ?? 8001);
+  readonly serverAddress = computed(() => `${this.localIp()}:${this.serverPort()}`);
 
   async loadSystemInfo(): Promise<void> {
     this.loading.set(true);
@@ -32,6 +36,15 @@ export class SystemService {
     try {
       await this.tauri.setAutostartEnabled(!current);
       this.systemInfo.update(s => s ? { ...s, autostart_enabled: !current } : s);
+    } catch (e) {
+      this.error.set(String(e));
+    }
+  }
+
+  async setServerPort(port: number): Promise<void> {
+    try {
+      await this.tauri.setServerPort(port);
+      this.pendingPort.set(port);
     } catch (e) {
       this.error.set(String(e));
     }

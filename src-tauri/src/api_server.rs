@@ -37,11 +37,19 @@ struct HealthResponse {
 }
 
 pub async fn start() {
+    let port = crate::settings::get_server_port();
+    let addr = format!("0.0.0.0:{}", port);
+    let listener = match TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            log::warn!("Puerto {} ya en uso, servidor HTTP no iniciado: {e}", port);
+            return;
+        }
+    };
     let app = Router::new()
         .route("/health", get(handle_health))
         .route("/api/print", post(handle_print));
-    let listener = TcpListener::bind("127.0.0.1:8001").await.unwrap();
-    log::info!("API server escuchando en http://127.0.0.1:8001");
+    log::info!("API server escuchando en http://{}", addr);
     axum::serve(listener, app).await.unwrap();
 }
 

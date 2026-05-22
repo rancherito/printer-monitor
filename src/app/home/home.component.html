@@ -7,7 +7,39 @@
     {{ system.isDev() ? 'DEV' : 'PROD' }}
   </span>
 
-  <span class="badge badge--ip">{{ system.localIp() }}</span>
+  <!-- Badge servidor: IP:puerto — clic para editar puerto -->
+  @if (editingServerPort()) {
+    <div class="server-port-editor" role="group" aria-label="Editar puerto del servidor">
+      <label class="server-port-editor__label" for="server-port-input">Puerto:</label>
+      <input
+        id="server-port-input"
+        class="server-port-editor__input"
+        type="number"
+        min="1"
+        max="65535"
+        [ngModel]="serverPortInput()"
+        (ngModelChange)="serverPortInput.set($event)"
+        (keydown.enter)="saveServerPort()"
+        (keydown.escape)="closePortEditor()"
+        aria-label="Puerto del servidor HTTP"
+      />
+      <cd-button size="sm" variant="primary" (clicked)="saveServerPort()">✓</cd-button>
+      <cd-button size="sm" variant="ghost" (clicked)="closePortEditor()">✕</cd-button>
+    </div>
+  } @else {
+    <button
+      type="button"
+      class="badge badge--server"
+      (click)="openPortEditor()"
+      title="Clic para cambiar el puerto del servidor"
+      aria-label="Servidor en {{ system.serverAddress() }}. Clic para cambiar puerto."
+    >
+      {{ system.serverAddress() }}
+      @if (system.pendingPort()) {
+        <span class="badge__pending" aria-label="Reinicio requerido">↻</span>
+      }
+    </button>
+  }
 
   <div class="app-header__end">
     <button

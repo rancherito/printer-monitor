@@ -17,6 +17,13 @@ use tauri::{
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Si ya hay una instancia corriendo → mostrar su ventana y salir
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -97,6 +104,8 @@ pub fn run() {
             system::get_system_info,
             system::get_autostart_enabled,
             system::set_autostart_enabled,
+            system::get_server_port,
+            system::set_server_port,
             printers::get_printers,
             printers::rename_printer,
             printers::print_test,

@@ -15,9 +15,36 @@ fn open_db() -> Result<Connection> {
             alias           TEXT PRIMARY KEY,
             connection_type TEXT NOT NULL,
             address         TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS app_config (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         );",
     )?;
     Ok(conn)
+}
+
+// ─── Configuración del servidor HTTP ─────────────────────────────────────────
+
+pub fn get_server_port() -> u16 {
+    let db = DB.lock().unwrap();
+    db.query_row(
+        "SELECT value FROM app_config WHERE key = 'server_port'",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|v| v.parse().ok())
+    .unwrap_or(8001)
+}
+
+pub fn set_server_port(port: u16) -> Result<()> {
+    let db = DB.lock().unwrap();
+    db.execute(
+        "INSERT OR REPLACE INTO app_config (key, value) VALUES ('server_port', ?1)",
+        params![port.to_string()],
+    )?;
+    Ok(())
 }
 
 fn dirs_path() -> std::path::PathBuf {

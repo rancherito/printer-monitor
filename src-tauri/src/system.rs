@@ -27,7 +27,7 @@ pub fn get_system_info() -> SystemInfo {
 
     SystemInfo {
         local_ip,
-        port: 8001,
+        port: crate::settings::get_server_port(),
         is_dev: cfg!(debug_assertions),
         printers,
         serial_ports: get_serial_port_list(),
@@ -43,6 +43,16 @@ pub fn get_autostart_enabled() -> bool {
 #[tauri::command]
 pub fn set_autostart_enabled(enabled: bool) -> Result<(), String> {
     set_autostart(enabled)
+}
+
+#[tauri::command]
+pub fn get_server_port() -> u16 {
+    crate::settings::get_server_port()
+}
+
+#[tauri::command]
+pub fn set_server_port(port: u16) -> Result<(), String> {
+    crate::settings::set_server_port(port).map_err(|e| e.to_string())
 }
 
 fn build_app_printers() -> Vec<PrinterInfo> {
