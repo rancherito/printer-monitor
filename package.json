@@ -8,7 +8,8 @@
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
     "tauri:dev": "bunx tauri dev",
-    "tauri:build": "bunx tauri build"
+    "tauri:build": "bunx tauri build",
+    "build:win": "bunx tauri build --target x86_64-pc-windows-msvc --bundles nsis,msi"
   },
   "prettier": {
     "printWidth": 100,

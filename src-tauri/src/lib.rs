@@ -29,11 +29,21 @@ pub fn run() {
             // Iniciar servidor HTTP interno en background
             tauri::async_runtime::spawn(api_server::start());
 
-            // Activar autoarranque la primera vez que se ejecuta la app
-            if system::is_first_launch() {
-                let _ = system::set_autostart(true);
-                system::mark_initialized();
+            // Si se lanzó via autostart ocultar la ventana al tray de inmediato
+            let launched_hidden = std::env::args().any(|a| a == "--autostart");
+            if launched_hidden {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
             }
+
+            // Activar autoarranque la primera vez (async → no bloquea el hilo UI)
+            tauri::async_runtime::spawn(async {
+                if system::is_first_launch() {
+                    let _ = system::set_autostart(true);
+                    system::mark_initialized();
+                }
+            });
 
             // ── Bandeja del sistema ──────────────────────────────────────────
             let show_i = MenuItem::with_id(app, "show", "Abrir",  true, None::<&str>)?;

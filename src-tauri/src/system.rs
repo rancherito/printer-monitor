@@ -111,7 +111,7 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
             Command::new("reg")
                 .creation_flags(CREATE_NO_WINDOW)
                 .args(["add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                       "/v", "PrinterMonitor", "/d", &exe_str, "/f"])
+                       "/v", "PrinterMonitor", "/d", &format!("\"{}\" --autostart", exe_str), "/f"])
                 .output()
                 .map_err(|e| e.to_string())?;
         } else {
