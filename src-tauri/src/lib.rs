@@ -44,11 +44,21 @@ pub fn run() {
                 }
             }
 
-            // Activar autoarranque la primera vez (async → no bloquea el hilo UI)
+            // Autoarranque: SOLO en release. Los builds de desarrollo (tauri dev)
+            // no deben tocar el registro — si lo hacen, al reiniciar Windows el
+            // binario dev arranca sin servidor Angular y muestra ERR_CONNECTION_REFUSED.
             tauri::async_runtime::spawn(async {
+                if cfg!(debug_assertions) {
+                    return; // dev build → no modificar el registro
+                }
                 if system::is_first_launch() {
+                    // Primera ejecución del instalador: registrar autoarranque
                     let _ = system::set_autostart(true);
                     system::mark_initialized();
+                } else if system::get_autostart_status() {
+                    // Reinstalación / actualización: refrescar la ruta del exe
+                    // para que apunte siempre al binario actual
+                    let _ = system::set_autostart(true);
                 }
             });
 
