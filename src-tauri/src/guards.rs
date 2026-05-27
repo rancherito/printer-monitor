@@ -72,6 +72,10 @@ pub fn guard_alias_unique(alias: &str) -> Result<(), GuardError> {
 
 /// El puerto serie debe existir en la lista de puertos disponibles.
 pub fn guard_usb_port_exists(port: &str) -> Result<(), GuardError> {
+    // Device interface paths (\\?\USB#...) can be opened directly — always accepted.
+    if port.starts_with("\\\\?\\") {
+        return Ok(());
+    }
     let ports = get_serial_port_list();
     if ports.contains(&port.to_string()) {
         Ok(())

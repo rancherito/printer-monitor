@@ -1,3 +1,8 @@
+export interface UsbDevice {
+  display_name: string;
+  port: string;
+}
+
 export interface PrinterInfo {
   name: string;
   queue_name: string;

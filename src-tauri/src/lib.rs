@@ -134,6 +134,7 @@ pub fn run() {
             network::get_network_config,
             network::scan_tcp_ip_printers,
             serial::get_serial_ports,
+            serial::get_usb_devices,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

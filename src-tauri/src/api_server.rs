@@ -25,7 +25,7 @@ fn default_size_page() -> u32 { 80 }
 
 fn size_page_to_width(size: u32) -> String {
     match size {
-        58 => "58mm".to_string(),
+        50 | 58 => "58mm".to_string(),
         _ => "80mm".to_string(),
     }
 }

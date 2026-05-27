@@ -857,6 +857,15 @@
       border-color: var(--accent);
       background: var(--accent-dim);
     }
+
+    &--disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+
+      &:hover {
+        border-color: var(--border);
+      }
+    }
   }
 
   &__title {

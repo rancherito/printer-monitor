@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import { invoke } from '@tauri-apps/api/core';
-import { PrinterInfo, SystemInfo, NetworkConfig, PrintedFile } from '../models';
+import { PrinterInfo, SystemInfo, NetworkConfig, PrintedFile, UsbDevice } from '../models';
 
 @Injectable({ providedIn: 'root' })
 export class TauriService {
@@ -62,6 +62,10 @@ export class TauriService {
 
   getSerialPorts() {
     return invoke<string[]>('get_serial_ports');
+  }
+
+  getUsbDevices() {
+    return invoke<UsbDevice[]>('get_usb_devices');
   }
 
   getAutostartEnabled() {

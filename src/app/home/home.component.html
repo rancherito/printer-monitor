@@ -481,20 +481,18 @@
             <p class="discovery-empty">No se detectaron puertos. Conecta la impresora y pulsa Refrescar.</p>
           } @else {
             <div class="discovery-list" role="listbox" aria-label="Puertos USB disponibles">
-              @for (port of printers.usbPorts(); track port) {
+              @for (device of printers.usbPorts(); track device.port) {
                 <button
                   type="button"
                   class="discovery-item"
-                  [class.discovery-item--active]="printers.usbSelectedPort() === port"
+                  [class.discovery-item--active]="printers.usbSelectedPort() === device.port"
                   role="option"
-                  [attr.aria-selected]="printers.usbSelectedPort() === port"
-                  (click)="printers.usbSelectedPort.set(port); printers.usbTestStatus.set('idle')"
+                  [attr.aria-selected]="printers.usbSelectedPort() === device.port"
+                  (click)="printers.usbSelectedPort.set(device.port); printers.usbTestStatus.set('idle')"
                 >
                   <span class="discovery-item__dot" aria-hidden="true"></span>
-                  <span class="discovery-item__ip">{{ port }}</span>
-                  <span class="discovery-item__badge">
-                    {{ port.startsWith('USB') ? 'USB Print' : 'Serial' }}
-                  </span>
+                  <span class="discovery-item__ip">{{ device.display_name }}</span>
+                  <span class="discovery-item__badge">USB Print</span>
                 </button>
               }
             </div>

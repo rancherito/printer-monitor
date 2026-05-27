@@ -19,7 +19,13 @@ pub fn send_escpos_to_port(port: &str, data: &[u8]) -> Result<String, String> {
     };
     use windows::Win32::System::IO::OVERLAPPED;
 
-    let path = format!("\\\\.\\{port}\0");
+    // Device interface paths (\\?\USB#VID_...#...) are used as-is;
+    // named ports (USB001, COM3, etc.) get the \\.\ prefix.
+    let path = if port.starts_with("\\\\?\\") || port.starts_with("\\\\.\\") {
+        format!("{port}\0")
+    } else {
+        format!("\\\\.\\{port}\0")
+    };
     let handle = unsafe {
         CreateFileA(
             PCSTR(path.as_ptr()),

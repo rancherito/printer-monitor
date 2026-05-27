@@ -1,7 +1,7 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { TauriService } from '../services/tauri.service';
 import { LogService } from '../services/log.service';
-import { PrinterInfo } from '../models';
+import { PrinterInfo, UsbDevice } from '../models';
 
 // ─── Guards Angular ───────────────────────────────────────────────────────────
 export function guardNonEmpty(value: string): string | null {
@@ -40,7 +40,7 @@ export class PrintersService {
 
   // USB dialog state
   readonly usbDialogOpen = signal(false);
-  readonly usbPorts = signal<string[]>([]);
+  readonly usbPorts = signal<UsbDevice[]>([]);
   readonly usbSelectedPort = signal<string | null>(null);
   readonly usbMode = signal<'system' | 'app'>('system');
   readonly usbAlias = signal('');
@@ -205,15 +205,15 @@ export class PrintersService {
   // ─── USB Dialog ───────────────────────────────────────────────────────────
   async openUsbDialog(): Promise<void> {
     this.usbSelectedPort.set(null);
-    this.usbMode.set('system');
+    this.usbMode.set('system'); // will be corrected to 'app' when port is selected if needed
     this.usbAlias.set('');
     this.usbResult.set(null);
     this.usbTestStatus.set('idle');
     this.usbTestMsg.set(null);
     this.usbSize.set('58mm');
     try {
-      const ports = await this.tauri.getSerialPorts();
-      this.usbPorts.set(ports);
+      const devices = await this.tauri.getUsbDevices();
+      this.usbPorts.set(devices);
     } catch (e) {
       this.usbPorts.set([]);
     }
@@ -224,8 +224,8 @@ export class PrintersService {
 
   async refreshUsbPorts(): Promise<void> {
     try {
-      const ports = await this.tauri.getSerialPorts();
-      this.usbPorts.set(ports);
+      const devices = await this.tauri.getUsbDevices();
+      this.usbPorts.set(devices);
     } catch (e) {
       this.usbPorts.set([]);
     }
