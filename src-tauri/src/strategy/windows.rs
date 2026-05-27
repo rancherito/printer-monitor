@@ -28,11 +28,17 @@ impl PrinterStrategy for WindowsStrategy {
     }
 
     fn install_usb(&self, port: &str, name: &str) -> Result<String, String> {
-        let esc_port = ps_escape_arg(port);
-        let esc_name = ps_escape_arg(name);
-        let driver   = find_or_install_generic_driver()?;
+        let esc_port   = ps_escape_arg(port);
+        let esc_name   = ps_escape_arg(name);
+        let driver     = find_or_install_generic_driver()?;
+        let esc_driver = ps_escape_arg(&driver);
+        // Idempotent: if a queue with this name already exists on this exact port,
+        // remove it first so re-registration works cleanly without duplicates.
+        // If it exists on a different port, Add-Printer returns a clear Windows error.
         let script = format!(
-            "Add-Printer -Name '{esc_name}' -PortName '{esc_port}' -DriverName '{driver}'"
+            "$p = Get-Printer -Name '{esc_name}' -EA SilentlyContinue; \
+             if ($p -and $p.PortName -eq '{esc_port}') {{ Remove-Printer -Name '{esc_name}' -EA SilentlyContinue }}; \
+             Add-Printer -Name '{esc_name}' -PortName '{esc_port}' -DriverName '{esc_driver}' -EA Stop"
         );
         run_ps(&script)
     }
@@ -97,68 +103,65 @@ fn ps_escape_arg(input: &str) -> String {
         .collect()
 }
 
-/// Tries to return a usable raw/generic printer driver name.
-/// Priority:
-///   1. "Generic / Text Only"  — attempt to install it from the Windows driver store
-///   2. Any already-installed driver whose name contains "Generic"
-///   3. "Microsoft IPP Class Driver"  (passes raw data reasonably well)
-///   4. "Microsoft enhanced Point and Print compatibility driver"
-///   5. First installed driver that isn't obviously PDF/XPS/Fax/OneNote
-fn find_or_install_generic_driver() -> Result<String, String> {
+/// Finds or installs a raw/passthrough printer driver suitable for ESC/POS.
+/// Works on all Windows 10 / Windows 11 machines without internet access.
+///
+/// Strategy:
+///   1. "Generic / Text Only" already installed → use it immediately.
+///   2. Install from the Windows DriverStore (FileRepository) — the INF *and* its
+///      binary files are always present there on Win10/11. This is the reliable path
+///      that works even on factory-fresh machines with no printers ever installed.
+///   3. Fallback to %windir%\inf\prnge001.inf / prngeneric.inf.
+///   4. Any already-installed driver containing "Generic".
+///   5. Known Microsoft pass-through drivers.
+///   6. First non-PDF/XPS/Fax/OneNote driver found.
+pub(crate) fn find_or_install_generic_driver() -> Result<String, String> {
     const PREFERRED: &str = "Generic / Text Only";
 
-    // --- 1. Is it already installed? ---
+    // --- 1. Already installed? ---
     let installed = get_installed_driver_names();
     if installed.iter().any(|d| d == PREFERRED) {
         return Ok(PREFERRED.to_string());
     }
 
-    // --- 2. Try to install from built-in Windows INF files (present on all Win10/11) ---
-    // Windows 10/11 ships it as prnge001.inf; older Windows used prngeneric.inf.
-    let inf_candidates = [
-        r"%windir%\inf\prnge001.inf",
-        r"%windir%\inf\prngeneric.inf",
-    ];
-    for inf in &inf_candidates {
-        // Expand the %windir% variable via PowerShell
-        let try_install = run_ps_output(&format!(
-            r#"$inf = [System.Environment]::ExpandEnvironmentVariables('{inf}'); \
-               if (Test-Path $inf) {{ \
-                   Add-PrinterDriver -Name '{PREFERRED}' -InfPath $inf -EA Stop 2>&1; \
-                   $ok = (Get-PrinterDriver -Name '{PREFERRED}' -EA SilentlyContinue) -ne $null; \
-                   Write-Output $ok \
-               }} else {{ Write-Output False }}"#
-        ));
-        if let Ok(out) = try_install {
-            if String::from_utf8_lossy(&out.stdout).trim().ends_with("True") {
-                return Ok(PREFERRED.to_string());
-            }
+    // --- 2 + 3. Install from DriverStore then %windir%\inf ---
+    // IMPORTANT: backtick (`) is the PowerShell line-continuation character.
+    // This script contains NO backslash continuations so it runs correctly on
+    // every PowerShell 5.1 / 7.x version shipped with Windows 10 and 11.
+    let script = r#"$name = 'Generic / Text Only'
+$dsInf = Get-Item "$env:windir\System32\DriverStore\FileRepository\prnge001.inf_*\prnge001.inf" `
+    -EA SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$candidates = [System.Collections.ArrayList]@()
+if ($dsInf) { [void]$candidates.Add($dsInf.FullName) }
+[void]$candidates.Add("$env:windir\inf\prnge001.inf")
+[void]$candidates.Add("$env:windir\inf\prngeneric.inf")
+foreach ($inf in $candidates) {
+    if (-not (Test-Path $inf -EA SilentlyContinue)) { continue }
+    try { Add-PrinterDriver -Name $name -InfPath $inf -EA Stop 2>&1 | Out-Null } catch {}
+    if (Get-PrinterDriver -Name $name -EA SilentlyContinue) { Write-Output 'OK'; exit }
+    try {
+        pnputil /add-driver "$inf" /install 2>&1 | Out-Null
+        Add-PrinterDriver -Name $name -EA Stop 2>&1 | Out-Null
+    } catch {}
+    if (Get-PrinterDriver -Name $name -EA SilentlyContinue) { Write-Output 'OK'; exit }
+}
+Write-Output 'FAIL'"#;
+
+    if let Ok(out) = run_ps_output(script) {
+        if String::from_utf8_lossy(&out.stdout).contains("OK") {
+            return Ok(PREFERRED.to_string());
         }
     }
 
-    // --- 3. Try pnputil to stage the INF, then Add-PrinterDriver ---
-    for inf in &inf_candidates {
-        let try_pnp = run_ps_output(&format!(
-            r#"$inf = [System.Environment]::ExpandEnvironmentVariables('{inf}'); \
-               if (Test-Path $inf) {{ \
-                   pnputil /add-driver $inf /install 2>&1 | Out-Null; \
-                   Add-PrinterDriver -Name '{PREFERRED}' -EA Stop 2>&1; \
-                   Write-Output ((Get-PrinterDriver -Name '{PREFERRED}' -EA SilentlyContinue) -ne $null) \
-               }} else {{ Write-Output False }}"#
-        ));
-        if let Ok(out) = try_pnp {
-            if String::from_utf8_lossy(&out.stdout).trim().ends_with("True") {
-                return Ok(PREFERRED.to_string());
-            }
-        }
-    }
+    // Re-read after install attempt (driver may now be present)
+    let installed = get_installed_driver_names();
 
-    // --- 3. Any installed driver whose name contains "Generic" ---
+    // --- 4. Any installed driver containing "Generic" ---
     if let Some(d) = installed.iter().find(|d| d.to_ascii_lowercase().contains("generic")) {
         return Ok(d.clone());
     }
 
-    // --- 4. Known Microsoft raw-pass-through drivers ---
+    // --- 5. Known Microsoft pass-through drivers ---
     for candidate in &[
         "Microsoft IPP Class Driver",
         "Microsoft enhanced Point and Print compatibility driver",
@@ -169,7 +172,7 @@ fn find_or_install_generic_driver() -> Result<String, String> {
         }
     }
 
-    // --- 5. First driver that isn't clearly PDF/XPS/Fax/OneNote ---
+    // --- 6. First driver that isn't clearly PDF/XPS/Fax/OneNote ---
     let skip = ["pdf", "xps", "fax", "onenote", "virtual print class"];
     if let Some(d) = installed.iter().find(|d| {
         let lower = d.to_ascii_lowercase();
@@ -179,7 +182,7 @@ fn find_or_install_generic_driver() -> Result<String, String> {
     }
 
     Err("No se encontró ningún controlador de impresora compatible. \
-         Instala 'Generic / Text Only' desde Configuración → Impresoras → Agregar impresora.".to_string())
+         Verifica que el servicio de cola de impresión (Spooler) esté activo.".to_string())
 }
 
 fn get_installed_driver_names() -> Vec<String> {

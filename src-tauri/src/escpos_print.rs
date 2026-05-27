@@ -139,15 +139,21 @@ fn center_text(text: &str, width: usize) -> String {
 #[cfg(target_os = "windows")]
 pub fn pdf_to_escpos(pdf_bytes: &[u8], size: &str) -> Result<Vec<u8>, String> {
     use pdfium_render::prelude::*;
-    use image::{GrayImage, Luma};
+    use image::{GrayImage, Luma, imageops};
 
     // Ancho en dots de la zona imprimible según perfil de papel (203 DPI = 8 dots/mm):
     //   58mm papel → 48mm imprimible × 8 = 384 dots
     //   80mm papel → 72mm imprimible × 8 = 576 dots
+    //
+    // Para mejor calidad, renderizamos a 3× (supersampling) y luego escalamos
+    // bilineal al tamaño final antes del dithering Floyd-Steinberg.
+    // Esto reduce el aliasing de fuentes y líneas finas en ambos tamaños.
+    const SUPERSAMPLE: u32 = 3;
     let target_px = match size {
         "58mm" => 384u32,
         _      => 576u32,
     };
+    let render_px = target_px * SUPERSAMPLE;
 
     let pdfium = crate::api_server::load_pdfium()?;
     let doc = pdfium
@@ -158,15 +164,11 @@ pub fn pdf_to_escpos(pdf_bytes: &[u8], size: &str) -> Result<Vec<u8>, String> {
     out.extend_from_slice(b"\x1b@"); // init
 
     for (idx, page) in doc.pages().iter().enumerate() {
-        // set_target_width escala CUALQUIER tamaño de PDF (A4, Carta, 80mm, etc.)
-        // al ancho exacto de dots del papel térmico, manteniendo la relación de aspecto.
-        // rotate_if_landscape(Degrees90, true) rota páginas apaisadas 90° y reaplica
-        // el constraint de ancho al lado largo, garantizando que el contenido siempre
-        // llene el papel térmico independientemente de la orientación del PDF origen.
+        // Renderizar a resolución alta (supersampling)
         let bitmap = page
             .render_with_config(
                 &PdfRenderConfig::new()
-                    .set_target_width(target_px as i32)
+                    .set_target_width(render_px as i32)
                     .rotate_if_landscape(PdfPageRenderRotation::Degrees90, true),
             )
             .map_err(|e| format!("Render PDF pág {}: {e}", idx + 1))?;
@@ -174,18 +176,26 @@ pub fn pdf_to_escpos(pdf_bytes: &[u8], size: &str) -> Result<Vec<u8>, String> {
         let rgba = bitmap.as_image().to_rgba8();
         let (w, h) = rgba.dimensions();
 
-        // Convertir a gris y dithering Floyd-Steinberg
-        let mut gray = GrayImage::new(w, h);
+        // Convertir a gris a resolución alta
+        let mut gray_hi = GrayImage::new(w, h);
         for (x, y, px) in rgba.enumerate_pixels() {
             let r = px[0] as u32;
             let g = px[1] as u32;
             let b = px[2] as u32;
-            let luma = ((r * 299 + g * 587 + b * 114) / 1000) as u8;
-            gray.put_pixel(x, y, Luma([luma]));
+            let a = px[3] as u32;
+            // Componer sobre fondo blanco (alpha premultiplication)
+            let luma = ((r * a + (255 - a) * 255) * 299
+                      + (g * a + (255 - a) * 255) * 587
+                      + (b * a + (255 - a) * 255) * 114) / (1000 * 255);
+            gray_hi.put_pixel(x, y, Luma([luma.min(255) as u8]));
         }
-        let dithered = floyd_steinberg(&gray);
 
-        // Codificar como ESC/POS GS v 0
+        // Escalar al ancho final con filtro de alta calidad (Lanczos3)
+        let final_h = ((h as u64 * target_px as u64) / w.max(1) as u64) as u32;
+        let gray = imageops::resize(&gray_hi, target_px, final_h.max(1), imageops::FilterType::Lanczos3);
+
+        // Dithering Floyd-Steinberg y codificación ESC/POS GS v 0
+        let dithered = floyd_steinberg(&gray);
         out.extend_from_slice(&raster_to_escpos_gsvzero(&dithered));
         out.extend_from_slice(b"\n");
     }
@@ -488,10 +498,12 @@ pub fn send_escpos_to_usb_spooler_port(port: &str, data: &[u8]) -> Result<String
     };
 
     let esc_port = port.replace('\'', "''");
+    let driver = crate::strategy::windows::find_or_install_generic_driver()
+        .map_err(|e| format!("No se pudo instalar el controlador para {port}: {e}"))?;
+    let esc_driver = driver.replace('\'', "''");
     let _ = run_ps(&format!("Remove-Printer -Name '{TEMP_Q}' -ErrorAction SilentlyContinue"));
     run_ps(&format!(
-        "Add-Printer -Name '{TEMP_Q}' -PortName '{esc_port}' \
-         -DriverName 'Generic / Text Only' -ErrorAction Stop"
+        "Add-Printer -Name '{TEMP_Q}' -PortName '{esc_port}' -DriverName '{esc_driver}' -ErrorAction Stop"
     ))
     .map_err(|e| format!("No se pudo crear cola temporal para {port}: {e}"))?;
     let result = send_raw_to_windows_queue(TEMP_Q, data);

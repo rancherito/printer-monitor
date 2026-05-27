@@ -58,11 +58,9 @@ if (Test-Path $enumBase) {
                 if (-not $parentId) { return }
                 $parentDev = Get-PnpDevice -InstanceId $parentId -EA SilentlyContinue
                 if (-not $parentDev -or $parentDev.Status -ne 'OK') { return }
-                $displayName = if ($spoolerMap[$portNum]) {
-                    $spoolerMap[$portNum]
-                } elseif ($parentDev.FriendlyName) {
-                    $parentDev.FriendlyName
-                } else { $portNum }
+                # Always use the hardware FriendlyName so the user sees the physical
+                # device name regardless of whether a spooler queue already exists.
+                $displayName = if ($parentDev.FriendlyName) { $parentDev.FriendlyName } else { $portNum }
                 $r += [PSCustomObject]@{ port = $portNum; display_name = $displayName }
             }
         }

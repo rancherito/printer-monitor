@@ -309,12 +309,13 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
 }
 
 pub fn generate_test_pdf_bytes(width: &str) -> Vec<u8> {
-    // Parámetros tipográficos según ancho de papel.
-    // Para 50mm: 141.73pt de ancho → fuente 7pt con margen 3pt cabe ~38 chars/línea.
-    // Para 80mm: 226.77pt de ancho → fuente 9pt con margen 6pt cabe ~47 chars/línea.
+    // Usamos el ancho IMPRIMIBLE real del papel (no el ancho total del rollo)
+    // para que el contenido del PDF llene exactamente los dots disponibles.
+    //   58mm papel → 48mm imprimible → 136pt
+    //   80mm papel → 72mm imprimible → 204pt
     let (w_mm, font_pt, margin_x, line_h) = match width {
-        "58mm" => (50.0_f32, 7.0_f32, 3.0_f32, 10.0_f32),
-        _      => (80.0_f32, 9.0_f32, 6.0_f32, 13.0_f32),
+        "58mm" => (48.0_f32, 7.0_f32, 3.0_f32, 10.0_f32),
+        _      => (72.0_f32, 9.0_f32, 4.0_f32, 13.0_f32),
     };
     let h_mm = 80.0_f32;
     let w_pt = mm_to_pt(w_mm);
