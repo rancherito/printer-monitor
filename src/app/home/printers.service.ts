@@ -1,5 +1,6 @@
-import { Injectable, signal, computed } from '@angular/core';
+import { Injectable, inject, signal, computed } from '@angular/core';
 import { TauriService } from '../services/tauri.service';
+import { LogService } from '../services/log.service';
 import { PrinterInfo } from '../models';
 
 // ─── Guards Angular ───────────────────────────────────────────────────────────
@@ -21,6 +22,7 @@ export type TestStatus = 'idle' | 'testing' | 'ok' | 'fail';
 @Injectable({ providedIn: 'root' })
 export class PrintersService {
   private readonly tauri = new TauriService();
+  private readonly log = inject(LogService);
 
   readonly printers = signal<PrinterInfo[]>([]);
   readonly loading = signal(false);
@@ -61,8 +63,10 @@ export class PrintersService {
     try {
       const list = await this.tauri.getPrinters();
       this.printers.set(list);
+      this.log.log('info', `${list.length} impresoras cargadas (${list.filter(p => p.source === 'os').length} SO, ${list.filter(p => p.source === 'app').length} app)`);
     } catch (e) {
       this.error.set(String(e));
+      this.log.log('error', 'Error al cargar impresoras', String(e));
     } finally {
       this.loading.set(false);
     }
@@ -114,9 +118,11 @@ export class PrintersService {
     if (err) { this.error.set(err); return; }
     try {
       await this.tauri.renamePrinter(queueName, newName);
+      this.log.log('success', `Impresora "${queueName}" renombrada a "${newName}"`);
       await this.loadPrinters();
     } catch (e) {
       this.error.set(String(e));
+      this.log.log('error', `Error al renombrar "${queueName}"`, String(e));
     }
   }
 
@@ -124,8 +130,10 @@ export class PrintersService {
     try {
       await this.tauri.removeCustomPrinter(alias);
       this.printers.update(list => list.filter(p => p.name !== alias));
+      this.log.log('warn', `Impresora personalizada "${alias}" eliminada`);
     } catch (e) {
       this.error.set(String(e));
+      this.log.log('error', `Error al eliminar "${alias}"`, String(e));
     }
   }
 
@@ -170,10 +178,12 @@ export class PrintersService {
       await this.tauri.addNetworkPrinter(ip, this.tcpAlias());
       try { await this.tauri.printTestTcp(ip, this.tcpSize()); }
       catch (e) { this.appError.set(`Prueba ${this.tcpAlias()}: ${String(e)}`); }
+      this.log.log('success', `Impresora TCP/IP agregada: ${this.tcpAlias()} (${ip})`);
       await this.loadPrinters();
       this.closeTcpDialog();
     } catch (e) {
       this.tcpResult.set(String(e));
+      this.log.log('error', `Error al agregar impresora TCP/IP (${ip})`, String(e));
     }
   }
 

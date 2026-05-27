@@ -55,6 +55,79 @@ pub fn set_server_port(port: u16) -> Result<(), String> {
     crate::settings::set_server_port(port).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn get_output_dir() -> String {
+    crate::settings::get_output_dir()
+        .to_string_lossy()
+        .to_string()
+}
+
+#[tauri::command]
+pub fn set_output_dir(path: String) -> Result<(), String> {
+    crate::settings::set_output_dir(&path).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+pub struct PrintedFile {
+    pub name: String,
+    pub path: String,
+    pub size_kb: u64,
+    pub modified: u64, // unix timestamp ms
+}
+
+#[tauri::command]
+pub fn list_printed_files() -> Vec<PrintedFile> {
+    let dir = crate::settings::get_output_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else { return vec![]; };
+    let mut files: Vec<PrintedFile> = entries
+        .flatten()
+        .filter(|e| {
+            e.path().extension().and_then(|x| x.to_str()) == Some("pdf")
+        })
+        .filter_map(|e| {
+            let meta = e.metadata().ok()?;
+            let modified = meta.modified().ok()?
+                .duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as u64;
+            Some(PrintedFile {
+                name: e.file_name().to_string_lossy().to_string(),
+                path: e.path().to_string_lossy().to_string(),
+                size_kb: meta.len() / 1024,
+                modified,
+            })
+        })
+        .collect();
+    files.sort_by(|a, b| b.modified.cmp(&a.modified));
+    files
+}
+
+#[tauri::command]
+pub fn open_output_dir() -> Result<(), String> {
+    let dir = crate::settings::get_output_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn build_app_printers() -> Vec<PrinterInfo> {
     get_custom_printers()
         .unwrap_or_default()

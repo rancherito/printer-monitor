@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import { invoke } from '@tauri-apps/api/core';
-import { PrinterInfo, SystemInfo, NetworkConfig } from '../models';
+import { PrinterInfo, SystemInfo, NetworkConfig, PrintedFile } from '../models';
 
 @Injectable({ providedIn: 'root' })
 export class TauriService {
@@ -78,5 +78,21 @@ export class TauriService {
 
   setServerPort(port: number) {
     return invoke<void>('set_server_port', { port });
+  }
+
+  getOutputDir() {
+    return invoke<string>('get_output_dir');
+  }
+
+  setOutputDir(path: string) {
+    return invoke<void>('set_output_dir', { path });
+  }
+
+  listPrintedFiles() {
+    return invoke<PrintedFile[]>('list_printed_files');
+  }
+
+  openOutputDir() {
+    return invoke<void>('open_output_dir');
   }
 }

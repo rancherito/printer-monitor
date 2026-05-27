@@ -1,32 +1,38 @@
-use axum::{extract::Json, http::{HeaderMap, StatusCode}, routing::{get, post}, Router};
+use axum::{body::Bytes, extract::Json, http::StatusCode, routing::{get, post}, Router};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
-use once_cell::sync::Lazy;
+use tower_http::cors::{Any, CorsLayer};
 use crate::settings::get_custom_printer;
-
-/// Token generado una sola vez al arranque — solo accesible a procesos del mismo usuario.
-static API_TOKEN: Lazy<String> = Lazy::new(|| {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("{:x}", ts ^ 0xDEAD_CAFE_1337_u128)
-});
 
 #[cfg(target_os = "windows")]
 use pdfium_render::prelude::*;
 
 #[derive(Deserialize)]
 struct PrintRequest {
-    printer: String,
-    pdf_b64: String,
-    width: String,
+    #[serde(rename = "base64Pdf")]
+    base64_pdf: String,
+    #[serde(default)]
+    name: String,
+    #[serde(rename = "ipAddress", default)]
+    ip_address: String,
+    #[serde(default)]
+    mode: String,
+    #[serde(rename = "sizePage", default = "default_size_page")]
+    size_page: u32,
+}
+
+fn default_size_page() -> u32 { 80 }
+
+fn size_page_to_width(size: u32) -> String {
+    match size {
+        58 => "58mm".to_string(),
+        _ => "80mm".to_string(),
+    }
 }
 
 #[derive(Serialize)]
 struct PrintResponse {
-    ok: bool,
+    state: &'static str,
     message: String,
 }
 
@@ -46,11 +52,21 @@ pub async fn start() {
             return;
         }
     };
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
     let app = Router::new()
+        .route("/", get(handle_root))
         .route("/health", get(handle_health))
-        .route("/api/print", post(handle_print));
+        .route("/printer/pdf/print", post(handle_print))
+        .layer(cors);
     log::info!("API server escuchando en http://{}", addr);
     axum::serve(listener, app).await.unwrap();
+}
+
+async fn handle_root() -> &'static str {
+    "Hello World, server running"
 }
 
 async fn handle_health() -> (StatusCode, Json<HealthResponse>) {
@@ -60,22 +76,24 @@ async fn handle_health() -> (StatusCode, Json<HealthResponse>) {
     )
 }
 
-async fn handle_print(headers: HeaderMap, Json(req): Json<PrintRequest>) -> (StatusCode, Json<PrintResponse>) {
-    let token = headers
-        .get("x-pm-token")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-
-    if token != API_TOKEN.as_str() {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(PrintResponse { ok: false, message: "Token inválido.".to_string() }),
-        );
-    }
-
-    match print_pdf_job(&req.pdf_b64, &req.printer, &req.width) {
-        Ok(msg) => (StatusCode::OK, Json(PrintResponse { ok: true, message: msg })),
-        Err(e) => (StatusCode::OK, Json(PrintResponse { ok: false, message: e })),
+async fn handle_print(body: Bytes) -> (StatusCode, Json<PrintResponse>) {
+    let req: PrintRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("[print] JSON inválido: {e} — body: {:?}", String::from_utf8_lossy(&body));
+            return (StatusCode::BAD_REQUEST, Json(PrintResponse { state: "failure", message: format!("JSON inválido: {e}") }));
+        }
+    };
+    let width = size_page_to_width(req.size_page);
+    let printer = if req.name.is_empty() {
+        req.ip_address.clone()
+    } else {
+        req.name.clone()
+    };
+    log::info!("[print] printer='{}' ip='{}' mode='{}' size={}mm", printer, req.ip_address, req.mode, req.size_page);
+    match print_pdf_job(&req.base64_pdf, &printer, &width) {
+        Ok(msg) => (StatusCode::OK, Json(PrintResponse { state: "success", message: msg })),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(PrintResponse { state: "failure", message: e })),
     }
 }
 
@@ -121,16 +139,44 @@ pub fn print_pdf_bytes_job(pdf_bytes: &[u8], printer_name: &str, width: &str) ->
 
 #[cfg(target_os = "windows")]
 fn print_pdf_windows_so(pdf_bytes: &[u8], printer_name: &str, width: &str) -> Result<String, String> {
-    // Impresoras térmicas (driver "Generic / Text Only") → ESC/POS raw al spooler.
-    // Impresoras estándar (PDF virtual, laser, etc.) → GDI directo al printer DC:
-    // el pipeline nativo activa el diálogo de guardado para "Microsoft Print to PDF".
     if is_thermal_escpos_printer(printer_name) {
         let escpos = crate::escpos_print::pdf_to_escpos(pdf_bytes, width)?;
         crate::escpos_print::send_raw_to_windows_queue(printer_name, &escpos)?;
         Ok(format!("PDF impreso (ESC/POS) en '{printer_name}' [{width}]"))
+    } else if is_virtual_printer(printer_name) {
+        print_pdf_virtual(pdf_bytes, printer_name)
     } else {
         crate::escpos_print::pdf_to_gdi_printer(pdf_bytes, printer_name, width)
     }
+}
+
+/// Impresoras virtuales (PDF, XPS, OneNote, Fax): guarda el PDF en un archivo
+/// temporal directamente, sin pasar por el spooler (que bloquearía esperando
+/// el diálogo "Guardar como" de "Microsoft Print to PDF" en proceso headless).
+#[cfg(target_os = "windows")]
+fn print_pdf_virtual(pdf_bytes: &[u8], printer_name: &str) -> Result<String, String> {
+    print_pdf_to_temp_file(pdf_bytes, printer_name)
+}
+
+/// Guarda el PDF en el directorio de salida configurado por el usuario.
+#[cfg(target_os = "windows")]
+fn print_pdf_to_temp_file(pdf_bytes: &[u8], printer_name: &str) -> Result<String, String> {
+    let dir = crate::settings::get_output_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Error creando directorio de salida: {e}"))?;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = dir.join(format!("print_{ts}.pdf"));
+    std::fs::write(&path, pdf_bytes).map_err(|e| format!("Error guardando PDF: {e}"))?;
+    log::info!("[print] PDF virtual guardado en '{}'", path.display());
+    Ok(format!("PDF guardado en '{}' (impresora virtual '{printer_name}')", path.display()))
+}
+
+#[cfg(target_os = "windows")]
+fn is_virtual_printer(printer_name: &str) -> bool {
+    let n = printer_name.to_ascii_lowercase();
+    n.contains("pdf") || n.contains("xps") || n.contains("onenote") || n.contains("fax")
 }
 
 /// Devuelve `true` si la impresora usa driver ESC/POS (Generic / Text Only).

@@ -248,12 +248,30 @@ pub fn pdf_to_gdi_printer(pdf_bytes: &[u8], printer_name: &str, width: &str) -> 
         .map_err(|e| format!("No se pudo cargar PDF: {e}"))?;
 
     let printer_w: Vec<u16> = printer_name.encode_utf16().chain(std::iter::once(0)).collect();
-    let docname_w: Vec<u16> = "PM-Preview\0".encode_utf16().collect();
+    let docname_w: Vec<u16> = "PM-Print\0".encode_utf16().collect();
+    let driver_w: Vec<u16> = "WINSPOOL\0".encode_utf16().collect();
+
+    // Para impresoras virtuales PDF/XPS se necesita un archivo de salida explícito,
+    // de lo contrario CreateDCW falla o StartDocW abre un diálogo que no puede mostrarse.
+    let is_virtual = {
+        let n = printer_name.to_ascii_lowercase();
+        n.contains("pdf") || n.contains("xps") || n.contains("onenote") || n.contains("fax")
+    };
+    let temp_output: Option<std::path::PathBuf> = if is_virtual {
+        let tmp = std::env::temp_dir().join(format!("pm_out_{}.pdf", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)));
+        Some(tmp)
+    } else {
+        None
+    };
+    let output_w: Option<Vec<u16>> = temp_output.as_ref().map(|p| {
+        p.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect()
+    });
 
     unsafe {
-        // Crear Printer Device Context (NULL driver = usar "WINSPOOL" implícito)
+        // Crear Printer Device Context — "WINSPOOL" es el driver correcto para todas las impresoras Windows.
         let dc = CreateDCW(
-            PCWSTR::null(),
+            PCWSTR(driver_w.as_ptr()),
             PCWSTR(printer_w.as_ptr()),
             PCWSTR::null(),
             None,
@@ -269,10 +287,11 @@ pub fn pdf_to_gdi_printer(pdf_bytes: &[u8], printer_name: &str, width: &str) -> 
         let page_w = GetDeviceCaps(dc, windows::Win32::Graphics::Gdi::GET_DEVICE_CAPS_INDEX(8));
         let page_h = GetDeviceCaps(dc, windows::Win32::Graphics::Gdi::GET_DEVICE_CAPS_INDEX(10));
 
+        let out_ptr = output_w.as_ref().map(|v| v.as_ptr()).unwrap_or(std::ptr::null());
         let doc_info = GdiDocInfoW {
             cbSize:       std::mem::size_of::<GdiDocInfoW>() as i32,
             lpszDocName:  docname_w.as_ptr(),
-            lpszOutput:   std::ptr::null(),
+            lpszOutput:   out_ptr,
             lpszDatatype: std::ptr::null(),
             fwType:       0,
         };
@@ -359,6 +378,11 @@ pub fn pdf_to_gdi_printer(pdf_bytes: &[u8], printer_name: &str, width: &str) -> 
 
         let _ = EndDoc(hdc_raw);
         let _ = DeleteDC(dc);
+
+        // Eliminar archivo temporal generado por impresoras virtuales PDF/XPS
+        if let Some(ref tmp) = temp_output {
+            let _ = std::fs::remove_file(tmp);
+        }
     }
 
     Ok(format!("PDF enviado a '{printer_name}' via GDI"))

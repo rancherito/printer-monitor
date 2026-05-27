@@ -47,6 +47,37 @@ pub fn set_server_port(port: u16) -> Result<()> {
     Ok(())
 }
 
+// ─── Directorio de salida de PDFs virtuales ───────────────────────────────────
+
+pub fn default_output_dir() -> std::path::PathBuf {
+    dirs::document_dir()
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("PrinterMonitor")
+}
+
+pub fn get_output_dir() -> std::path::PathBuf {
+    let db = DB.lock().unwrap();
+    let stored = db.query_row(
+        "SELECT value FROM app_config WHERE key = 'output_dir'",
+        [],
+        |r| r.get::<_, String>(0),
+    ).ok();
+    match stored {
+        Some(v) if !v.is_empty() => std::path::PathBuf::from(v),
+        _ => default_output_dir(),
+    }
+}
+
+pub fn set_output_dir(path: &str) -> Result<()> {
+    let db = DB.lock().unwrap();
+    db.execute(
+        "INSERT OR REPLACE INTO app_config (key, value) VALUES ('output_dir', ?1)",
+        params![path],
+    )?;
+    Ok(())
+}
+
 fn dirs_path() -> std::path::PathBuf {
     // Usar el directorio de datos del usuario en lugar de temp (que puede limpiarse).
     let base = dirs::data_local_dir()

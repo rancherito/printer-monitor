@@ -1,6 +1,6 @@
 <!-- ─── Header ─────────────────────────────────────────────────────────────── -->
 <header class="app-header">
-  <span class="app-header__icon" aria-hidden="true">🖨️</span>
+  <ng-icon name="matPrint" class="app-header__icon" aria-hidden="true" />
   <h1 class="app-header__title">Printer Monitor</h1>
 
   <span class="badge" [class.badge--dev]="system.isDev()" [class.badge--prod]="!system.isDev()">
@@ -23,8 +23,8 @@
         (keydown.escape)="closePortEditor()"
         aria-label="Puerto del servidor HTTP"
       />
-      <cd-button size="sm" variant="primary" (clicked)="saveServerPort()">✓</cd-button>
-      <cd-button size="sm" variant="ghost" (clicked)="closePortEditor()">✕</cd-button>
+      <cd-button size="sm" variant="primary" (clicked)="saveServerPort()"><ng-icon name="matCheck" /></cd-button>
+      <cd-button size="sm" variant="ghost" (clicked)="closePortEditor()"><ng-icon name="matClose" /></cd-button>
     </div>
   } @else {
     <button
@@ -36,7 +36,7 @@
     >
       {{ system.serverAddress() }}
       @if (system.pendingPort()) {
-        <span class="badge__pending" aria-label="Reinicio requerido">↻</span>
+        <ng-icon name="matRefresh" class="badge__pending" aria-label="Reinicio requerido" />
       }
     </button>
   }
@@ -50,15 +50,62 @@
       aria-label="Autostart"
       (click)="system.toggleAutostart()"
     >
-      <span aria-hidden="true">⚡</span>
+      <ng-icon name="matBolt" aria-hidden="true" />
       {{ system.autostartEnabled() ? 'Autostart ON' : 'Autostart OFF' }}
     </button>
 
-    <cd-button variant="ghost" size="sm" (clicked)="refresh()">↻ Refresh</cd-button>
+    <cd-button variant="ghost" size="sm" (clicked)="refresh()"><ng-icon name="matRefresh" /> Refresh</cd-button>
   </div>
 </header>
 
-<!-- ─── Body ─────────────────────────────────────────────────────────────── -->
+<!-- ─── Layout ─────────────────────────────────────────────────────────────── -->
+<div class="app-layout">
+
+  <!-- Sidebar -->
+  <aside class="app-sidebar" aria-label="Navegación principal">
+    <nav role="navigation">
+      <button
+        type="button"
+        class="sidebar-item"
+        [class.sidebar-item--active]="activeTab() === 'printers'"
+        [attr.aria-current]="activeTab() === 'printers' ? 'page' : null"
+        (click)="switchTab('printers')"
+      >
+        <ng-icon name="matPrint" class="sidebar-item__icon" aria-hidden="true" />
+        <span class="sidebar-item__label">Impresoras</span>
+      </button>
+      <button
+        type="button"
+        class="sidebar-item"
+        [class.sidebar-item--active]="activeTab() === 'config'"
+        [attr.aria-current]="activeTab() === 'config' ? 'page' : null"
+        (click)="switchTab('config')"
+      >
+        <ng-icon name="matSettings" class="sidebar-item__icon" aria-hidden="true" />
+        <span class="sidebar-item__label">Configuración</span>
+      </button>
+      <button
+        type="button"
+        class="sidebar-item"
+        [class.sidebar-item--active]="activeTab() === 'logs'"
+        [attr.aria-current]="activeTab() === 'logs' ? 'page' : null"
+        (click)="switchTab('logs')"
+      >
+        <ng-icon name="matHistory" class="sidebar-item__icon" aria-hidden="true" />
+        <span class="sidebar-item__label">Logs</span>
+        @if (logService.unreadCount() > 0) {
+          <span class="sidebar-item__badge" [attr.aria-label]="logService.unreadCount() + ' registros no leídos'">
+            {{ logService.unreadCount() }}
+          </span>
+        }
+      </button>
+    </nav>
+  </aside>
+
+  <!-- Contenido -->
+  <div class="app-content">
+
+@if (activeTab() === 'printers') {
 <div class="app-body">
 
   <!-- ─── Left panel: OS printers ─────────────────────────────────────────── -->
@@ -86,8 +133,8 @@
                     (ngModelChange)="renameValue.set($event)"
                     [attr.aria-label]="'Nuevo nombre para ' + printer.name"
                   />
-                  <cd-button size="sm" variant="primary" (clicked)="confirmRename()">✓</cd-button>
-                  <cd-button size="sm" variant="ghost" (clicked)="cancelRename()">✕</cd-button>
+                  <cd-button size="sm" variant="primary" (clicked)="confirmRename()"><ng-icon name="matCheck" /></cd-button>
+                  <cd-button size="sm" variant="ghost" (clicked)="cancelRename()"><ng-icon name="matClose" /></cd-button>
                 </div>
               } @else {
                 <div class="printer-meta">
@@ -109,10 +156,10 @@
                 <cd-button size="sm" variant="secondary" (clicked)="printers.printTestA4Pdf(printer.queue_name, '58mm')">58mm</cd-button>
                 <cd-button size="sm" variant="secondary" (clicked)="printers.printTestA4Pdf(printer.queue_name, '80mm')">80mm</cd-button>
                 <cd-button size="sm" variant="ghost" (clicked)="printers.clearQueue(printer.queue_name)">
-                  <span aria-hidden="true">🗑</span> Cola
+                  <ng-icon name="matDeleteOutline" aria-hidden="true" /> Cola
                 </cd-button>
                 <cd-button size="sm" variant="ghost" (clicked)="startRename(printer)">
-                  <span aria-hidden="true">✎</span>
+                  <ng-icon name="matEdit" aria-hidden="true" />
                 </cd-button>
               </div>
             }
@@ -156,7 +203,7 @@
               <cd-button size="sm" variant="secondary" (clicked)="printers.printAppTestPdf(printer.queue_name, '58mm')">58mm</cd-button>
               <cd-button size="sm" variant="secondary" (clicked)="printers.printAppTestPdf(printer.queue_name, '80mm')">80mm</cd-button>
               <cd-button size="sm" variant="danger" (clicked)="printers.removeCustomPrinter(printer.name)">
-                <span aria-hidden="true">✕</span>
+                  <ng-icon name="matClose" aria-hidden="true" />
               </cd-button>
             </div>
           </div>
@@ -169,12 +216,117 @@
     }
 
     <div class="panel-sidebar__footer">
-      <cd-button variant="primary" size="sm" (clicked)="printers.openTcpDialog(system.localIp())">+ TCP/IP</cd-button>
-      <cd-button variant="secondary" size="sm" (clicked)="printers.openUsbDialog()">+ USB</cd-button>
+      <cd-button variant="primary" size="sm" (clicked)="printers.openTcpDialog(system.localIp())"><ng-icon name="matAdd" /> TCP/IP</cd-button>
+      <cd-button variant="secondary" size="sm" (clicked)="printers.openUsbDialog()"><ng-icon name="matAdd" /> USB</cd-button>
     </div>
   </aside>
 
 </div>
+} @else if (activeTab() === 'config') {
+
+<!-- ─── Panel Configuración ───────────────────────────────────────────────── -->
+<div class="config-panel">
+
+  <!-- Directorio de salida -->
+  <section class="config-section" aria-labelledby="config-dir-title">
+    <h2 id="config-dir-title" class="config-section__title">
+      <ng-icon name="matFolder" aria-hidden="true" /> Directorio de archivos impresos
+    </h2>
+    <p class="config-section__desc">
+      Los PDFs enviados a impresoras virtuales (PDF, XPS, etc.) se guardan aquí.
+    </p>
+
+    @if (editingOutputDir()) {
+      <div class="config-dir-editor" role="group" aria-label="Editar directorio de salida">
+        <input
+          class="config-dir-editor__input"
+          type="text"
+          id="output-dir-input"
+          [ngModel]="system.outputDirInput()"
+          (ngModelChange)="system.outputDirInput.set($event)"
+          (keydown.enter)="saveOutputDir()"
+          (keydown.escape)="closeDirEditor()"
+          aria-label="Ruta del directorio de salida"
+          placeholder="C:\Users\...\Documents\PrinterMonitor"
+        />
+        <cd-button size="sm" variant="primary" (clicked)="saveOutputDir()"><ng-icon name="matCheck" /> Guardar</cd-button>
+        <cd-button size="sm" variant="ghost" (clicked)="closeDirEditor()"><ng-icon name="matClose" /></cd-button>
+      </div>
+    } @else {
+      <div class="config-dir-row">
+        <code class="config-dir-row__path">{{ system.outputDir() || '—' }}</code>
+        <cd-button size="sm" variant="ghost" (clicked)="openDirEditor()"><ng-icon name="matEdit" /> Cambiar</cd-button>
+        <cd-button size="sm" variant="ghost" (clicked)="system.openOutputDir()">
+          <ng-icon name="matFolderOpen" aria-hidden="true" /> Abrir
+        </cd-button>
+      </div>
+    }
+  </section>
+
+  <!-- Archivos impresos -->
+  <section class="config-section" aria-labelledby="config-files-title">
+    <div class="config-section__header">
+      <h2 id="config-files-title" class="config-section__title">
+        <ng-icon name="matListAlt" aria-hidden="true" /> Archivos impresos
+      </h2>
+      <cd-button size="sm" variant="ghost" (clicked)="system.loadPrintedFiles()"><ng-icon name="matRefresh" /> Actualizar</cd-button>
+    </div>
+
+    @if (system.filesLoading()) {
+      <div class="config-files-loading" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span> Cargando…
+      </div>
+    } @else if (system.printedFiles().length === 0) {
+      <p class="empty-msg">No hay archivos en el directorio configurado.</p>
+    } @else {
+      <div class="config-files-list" role="list">
+        @for (file of system.printedFiles(); track file.path) {
+          <div class="config-file-item" role="listitem">
+            <ng-icon name="matDescription" class="config-file-item__icon" aria-hidden="true" />
+            <div class="config-file-item__info">
+              <span class="config-file-item__name">{{ file.name }}</span>
+              <span class="config-file-item__meta">{{ file.size_kb }} KB · {{ formatDate(file.modified) }}</span>
+            </div>
+          </div>
+        }
+      </div>
+    }
+  </section>
+
+</div>
+} @else {
+
+<!-- ─── Panel Logs ───────────────────────────────────────────────────────── -->
+<div class="logs-panel">
+  <div class="logs-panel__toolbar">
+    <h2 class="logs-panel__title">Registros del sistema</h2>
+    <cd-button size="sm" variant="ghost" (clicked)="logService.clear()">
+      <ng-icon name="matDeleteOutline" aria-hidden="true" /> Limpiar
+    </cd-button>
+  </div>
+
+  @if (logService.entries().length === 0) {
+    <p class="empty-msg">No hay registros aún.</p>
+  } @else {
+    <div class="log-list" role="list">
+      @for (entry of logService.entries(); track entry.id) {
+        <div class="log-entry log-entry--{{ entry.level }}" role="listitem">
+          <span class="log-entry__time">{{ formatTime(entry.timestamp) }}</span>
+          <span class="log-entry__level">{{ entry.level }}</span>
+          <span class="log-entry__msg">{{ entry.message }}</span>
+          @if (entry.detail) {
+            <span class="log-entry__detail">{{ entry.detail }}</span>
+          }
+        </div>
+      }
+    </div>
+  }
+</div>
+
+}
+
+  </div><!-- /.app-content -->
+</div><!-- /.app-layout -->
 
 <!-- ─── Dialog TCP/IP ─────────────────────────────────────────────────────── -->
 @if (printers.tcpDialogOpen()) {
@@ -184,9 +336,9 @@
       <!-- Header -->
       <div class="dialog__header">
         <h3 id="tcp-dialog-title" class="dialog__title">
-          <span aria-hidden="true">🌐</span> Agregar impresora TCP/IP
+          <ng-icon name="matLan" aria-hidden="true" /> Agregar impresora TCP/IP
         </h3>
-        <button type="button" class="dialog__close" aria-label="Cerrar" (click)="printers.closeTcpDialog()">✕</button>
+        <button type="button" class="dialog__close" aria-label="Cerrar" (click)="printers.closeTcpDialog()"><ng-icon name="matClose" /></button>
       </div>
 
       <div class="dialog__body">
@@ -195,7 +347,7 @@
         <div class="dialog__discovery">
           <div class="dialog__section-header">
             <span class="dialog__section-label">Descubrimiento en red</span>
-            <cd-button size="sm" variant="ghost" [disabled]="printers.tcpScanning()" (clicked)="printers.scanTcpIpPrinters(system.localIp())">↻ Escanear</cd-button>
+            <cd-button size="sm" variant="ghost" [disabled]="printers.tcpScanning()" (clicked)="printers.scanTcpIpPrinters(system.localIp())"><ng-icon name="matSearch" /> Escanear</cd-button>
           </div>
 
           @if (printers.tcpScanning()) {
@@ -260,7 +412,7 @@
               @if (printers.tcpTestStatus() === 'testing') {
                 <span class="spinner spinner--sm" aria-hidden="true"></span> Probando…
               } @else {
-                <span aria-hidden="true">🖨</span> Probar impresión
+                <ng-icon name="matPrint" aria-hidden="true" /> Probar impresión
               }
             </cd-button>
             @if (printers.tcpTestStatus() !== 'idle') {
@@ -270,8 +422,8 @@
                 [class.test-status--fail]="printers.tcpTestStatus() === 'fail'"
                 role="status"
               >
-                @if (printers.tcpTestStatus() === 'ok') { ✓ {{ printers.tcpTestMsg() }} }
-                @if (printers.tcpTestStatus() === 'fail') { ✗ {{ printers.tcpTestMsg() }} }
+                @if (printers.tcpTestStatus() === 'ok') { <ng-icon name="matCheckCircle" /> {{ printers.tcpTestMsg() }} }
+                @if (printers.tcpTestStatus() === 'fail') { <ng-icon name="matClose" /> {{ printers.tcpTestMsg() }} }
               </span>
             }
           </div>
@@ -311,9 +463,9 @@
       <!-- Header -->
       <div class="dialog__header">
         <h3 id="usb-dialog-title" class="dialog__title">
-          <span aria-hidden="true">🔌</span> Agregar impresora USB
+          <ng-icon name="matUsb" aria-hidden="true" /> Agregar impresora USB
         </h3>
-        <button type="button" class="dialog__close" aria-label="Cerrar" (click)="printers.closeUsbDialog()">✕</button>
+        <button type="button" class="dialog__close" aria-label="Cerrar" (click)="printers.closeUsbDialog()"><ng-icon name="matClose" /></button>
       </div>
 
       <div class="dialog__body">
@@ -322,11 +474,11 @@
         <div class="dialog__discovery">
           <div class="dialog__section-header">
             <span class="dialog__section-label">Puertos detectados</span>
-            <cd-button size="sm" variant="ghost" (clicked)="printers.refreshUsbPorts()">↻ Refrescar</cd-button>
+            <cd-button size="sm" variant="ghost" (clicked)="printers.refreshUsbPorts()"><ng-icon name="matRefresh" /> Refrescar</cd-button>
           </div>
 
           @if (printers.usbPorts().length === 0) {
-            <p class="discovery-empty">No se detectaron puertos. Conecta la impresora y pulsa ↻ Refrescar.</p>
+            <p class="discovery-empty">No se detectaron puertos. Conecta la impresora y pulsa Refrescar.</p>
           } @else {
             <div class="discovery-list" role="listbox" aria-label="Puertos USB disponibles">
               @for (port of printers.usbPorts(); track port) {
@@ -412,7 +564,7 @@
               @if (printers.usbTestStatus() === 'testing') {
                 <span class="spinner spinner--sm" aria-hidden="true"></span> Probando…
               } @else {
-                <span aria-hidden="true">🖨</span> Probar impresión
+                <ng-icon name="matPrint" aria-hidden="true" /> Probar impresión
               }
             </cd-button>
             @if (printers.usbTestStatus() !== 'idle') {
@@ -422,8 +574,8 @@
                 [class.test-status--fail]="printers.usbTestStatus() === 'fail'"
                 role="status"
               >
-                @if (printers.usbTestStatus() === 'ok') { ✓ {{ printers.usbTestMsg() }} }
-                @if (printers.usbTestStatus() === 'fail') { ✗ {{ printers.usbTestMsg() }} }
+                @if (printers.usbTestStatus() === 'ok') { <ng-icon name="matCheckCircle" /> {{ printers.usbTestMsg() }} }
+                @if (printers.usbTestStatus() === 'fail') { <ng-icon name="matClose" /> {{ printers.usbTestMsg() }} }
               </span>
             }
           </div>
