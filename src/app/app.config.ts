@@ -1,4 +1,4 @@
-import { ApplicationConfig, provideBrowserGlobalErrorListeners } from '@angular/core';
+import { ApplicationConfig, provideBrowserGlobalErrorListeners, provideZonelessChangeDetection } from '@angular/core';
 import { provideIcons } from '@ng-icons/core';
 import {
   matAdd, matBolt, matCheck, matCheckCircle, matClose,
@@ -9,6 +9,7 @@ import {
 
 export const appConfig: ApplicationConfig = {
   providers: [
+    provideZonelessChangeDetection(),
     provideBrowserGlobalErrorListeners(),
     provideIcons({
       matAdd, matBolt, matCheck, matCheckCircle, matClose,

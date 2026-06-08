@@ -7,6 +7,7 @@ mod system;
 mod settings;
 mod api_server;
 mod escpos_print;
+mod printer_cache;
 
 use tauri::{
     menu::{Menu, MenuItem},

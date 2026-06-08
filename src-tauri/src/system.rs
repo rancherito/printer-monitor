@@ -15,34 +15,51 @@ pub struct SystemInfo {
 }
 
 #[tauri::command]
-pub fn get_system_info() -> SystemInfo {
-    let local_ip = local_ip_address::local_ip()
-        .map(|a| a.to_string())
-        .unwrap_or_else(|_| "127.0.0.1".to_string());
+pub async fn get_system_info() -> SystemInfo {
+    // Las 4 fuentes se ejecutan en paralelo en el pool de bloqueantes para que
+    // el tiempo total sea max(tiempos) en lugar de la suma serial.
+    let (local_ip, printers, serial_ports, autostart_enabled) = tokio::join!(
+        tokio::task::spawn_blocking(|| {
+            local_ip_address::local_ip()
+                .map(|a| a.to_string())
+                .unwrap_or_else(|_| "127.0.0.1".to_string())
+        }),
+        tokio::task::spawn_blocking(|| {
+            let mut list = get_strategy().list_printers();
+            list.extend(build_app_printers());
+            list
+        }),
+        tokio::task::spawn_blocking(get_serial_port_list),
+        tokio::task::spawn_blocking(get_autostart_status),
+    );
 
-    let os_printers = get_strategy().list_printers();
-    let app_printers = build_app_printers();
-    let mut printers = os_printers;
-    printers.extend(app_printers);
+    let local_ip = local_ip.unwrap_or_else(|_| "127.0.0.1".to_string());
+    let printers = printers.unwrap_or_default();
+    let serial_ports = serial_ports.unwrap_or_default();
+    let autostart_enabled = autostart_enabled.unwrap_or(false);
 
     SystemInfo {
         local_ip,
         port: crate::settings::get_server_port(),
         is_dev: cfg!(debug_assertions),
         printers,
-        serial_ports: get_serial_port_list(),
-        autostart_enabled: get_autostart_status(),
+        serial_ports,
+        autostart_enabled,
     }
 }
 
 #[tauri::command]
-pub fn get_autostart_enabled() -> bool {
-    get_autostart_status()
+pub async fn get_autostart_enabled() -> bool {
+    tokio::task::spawn_blocking(get_autostart_status)
+        .await
+        .unwrap_or(false)
 }
 
 #[tauri::command]
-pub fn set_autostart_enabled(enabled: bool) -> Result<(), String> {
-    set_autostart(enabled)
+pub async fn set_autostart_enabled(enabled: bool) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || set_autostart(enabled))
+        .await
+        .map_err(|e| format!("Join error: {e}"))?
 }
 
 #[tauri::command]
@@ -63,8 +80,11 @@ pub fn get_output_dir() -> String {
 }
 
 #[tauri::command]
-pub fn set_output_dir(path: String) -> Result<(), String> {
-    crate::settings::set_output_dir(&path).map_err(|e| e.to_string())
+pub async fn set_output_dir(path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || crate::settings::set_output_dir(&path))
+        .await
+        .map_err(|e| format!("Join error: {e}"))?
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]
@@ -76,7 +96,13 @@ pub struct PrintedFile {
 }
 
 #[tauri::command]
-pub fn list_printed_files() -> Vec<PrintedFile> {
+pub async fn list_printed_files() -> Vec<PrintedFile> {
+    tokio::task::spawn_blocking(list_printed_files_blocking)
+        .await
+        .unwrap_or_default()
+}
+
+fn list_printed_files_blocking() -> Vec<PrintedFile> {
     let dir = crate::settings::get_output_dir();
     let Ok(entries) = std::fs::read_dir(&dir) else { return vec![]; };
     let mut files: Vec<PrintedFile> = entries
@@ -101,7 +127,13 @@ pub fn list_printed_files() -> Vec<PrintedFile> {
 }
 
 #[tauri::command]
-pub fn open_output_dir() -> Result<(), String> {
+pub async fn open_output_dir() -> Result<(), String> {
+    tokio::task::spawn_blocking(open_output_dir_blocking)
+        .await
+        .map_err(|e| format!("Join error: {e}"))?
+}
+
+fn open_output_dir_blocking() -> Result<(), String> {
     let dir = crate::settings::get_output_dir();
     let _ = std::fs::create_dir_all(&dir);
     #[cfg(target_os = "windows")]

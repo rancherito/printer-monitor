@@ -35,9 +35,6 @@
       aria-label="Servidor en {{ system.serverAddress() }}. Clic para cambiar puerto."
     >
       {{ system.serverAddress() }}
-      @if (system.pendingPort()) {
-        <ng-icon name="matRefresh" class="badge__pending" aria-label="Reinicio requerido" />
-      }
     </button>
   }
 
@@ -73,6 +70,9 @@
       >
         <ng-icon name="matPrint" class="sidebar-item__icon" aria-hidden="true" />
         <span class="sidebar-item__label">Impresoras</span>
+        @if (printers.printers.isLoading()) {
+          <span class="spinner spinner--sm" aria-hidden="true"></span>
+        }
       </button>
       <button
         type="button"
@@ -112,7 +112,7 @@
   <main class="panel" aria-label="Impresoras del sistema operativo">
     <h2 class="panel__title">Impresoras del SO</h2>
 
-    @if (printers.loading()) {
+    @if (printers.printers.isLoading() && !printers.printers.hasValue()) {
       @for (_ of [1,2,3]; track $index) {
         <div class="skeleton" role="status" aria-label="Cargando..."></div>
       }
@@ -216,7 +216,7 @@
     }
 
     <div class="panel-sidebar__footer">
-      <cd-button variant="primary" size="sm" (clicked)="printers.openTcpDialog(system.localIp())"><ng-icon name="matAdd" /> TCP/IP</cd-button>
+      <cd-button variant="primary" size="sm" (clicked)="printers.openTcpDialog()"><ng-icon name="matAdd" /> TCP/IP</cd-button>
       <cd-button variant="secondary" size="sm" (clicked)="printers.openUsbDialog()"><ng-icon name="matAdd" /> USB</cd-button>
     </div>
   </aside>
@@ -242,8 +242,8 @@
           class="config-dir-editor__input"
           type="text"
           id="output-dir-input"
-          [ngModel]="system.outputDirInput()"
-          (ngModelChange)="system.outputDirInput.set($event)"
+          [ngModel]="outputDirInput()"
+          (ngModelChange)="outputDirInput.set($event)"
           (keydown.enter)="saveOutputDir()"
           (keydown.escape)="closeDirEditor()"
           aria-label="Ruta del directorio de salida"
@@ -254,7 +254,7 @@
       </div>
     } @else {
       <div class="config-dir-row">
-        <code class="config-dir-row__path">{{ system.outputDir() || '—' }}</code>
+        <code class="config-dir-row__path">{{ system.outputDir.value() || '—' }}</code>
         <cd-button size="sm" variant="ghost" (clicked)="openDirEditor()"><ng-icon name="matEdit" /> Cambiar</cd-button>
         <cd-button size="sm" variant="ghost" (clicked)="system.openOutputDir()">
           <ng-icon name="matFolderOpen" aria-hidden="true" /> Abrir
@@ -269,18 +269,18 @@
       <h2 id="config-files-title" class="config-section__title">
         <ng-icon name="matListAlt" aria-hidden="true" /> Archivos impresos
       </h2>
-      <cd-button size="sm" variant="ghost" (clicked)="system.loadPrintedFiles()"><ng-icon name="matRefresh" /> Actualizar</cd-button>
+      <cd-button size="sm" variant="ghost" (clicked)="system.refreshAll()"><ng-icon name="matRefresh" /> Actualizar</cd-button>
     </div>
 
-    @if (system.filesLoading()) {
+    @if (system.printedFiles.isLoading() && !system.printedFiles.hasValue()) {
       <div class="config-files-loading" aria-live="polite">
         <span class="spinner" aria-hidden="true"></span> Cargando…
       </div>
-    } @else if (system.printedFiles().length === 0) {
+    } @else if ((system.printedFiles.value() ?? []).length === 0) {
       <p class="empty-msg">No hay archivos en el directorio configurado.</p>
     } @else {
       <div class="config-files-list" role="list">
-        @for (file of system.printedFiles(); track file.path) {
+        @for (file of system.printedFiles.value() ?? []; track file.path) {
           <div class="config-file-item" role="listitem">
             <ng-icon name="matDescription" class="config-file-item__icon" aria-hidden="true" />
             <div class="config-file-item__info">
@@ -606,4 +606,3 @@
     </div>
   </div>
 }
-

@@ -1,18 +1,16 @@
 import {
   ChangeDetectionStrategy,
   Component,
-  OnInit,
-  signal,
   inject,
+  signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NgIcon } from '@ng-icons/core';
 import { BtnComponent } from '../btn.component';
 import { CardComponent } from '../card.component';
-import { SystemService } from './system.service';
-import { PrintersService } from './printers.service';
+import { SystemResourceService } from '../core/system-resource.service';
+import { PrintersResourceService } from '../core/printers-resource.service';
 import { LogService } from '../services/log.service';
-import { PrinterInfo } from '../models';
 
 @Component({
   selector: 'app-home',
@@ -21,9 +19,9 @@ import { PrinterInfo } from '../models';
   styleUrl: './home.component.scss',
   imports: [FormsModule, BtnComponent, CardComponent, NgIcon],
 })
-export class HomeComponent implements OnInit {
-  readonly system = inject(SystemService);
-  readonly printers = inject(PrintersService);
+export class HomeComponent {
+  readonly system = inject(SystemResourceService);
+  readonly printers = inject(PrintersResourceService);
   readonly logService = inject(LogService);
 
   readonly activeTab = signal<'printers' | 'config' | 'logs'>('printers');
@@ -35,29 +33,24 @@ export class HomeComponent implements OnInit {
   readonly serverPortInput = signal('');
 
   readonly editingOutputDir = signal(false);
+  readonly outputDirInput = signal('');
 
-  async ngOnInit(): Promise<void> {
-    await this.system.loadSystemInfo();
-    await this.printers.loadPrinters();
-    await this.system.loadOutputDir();
+  refresh(): void {
+    this.system.refreshAll();
+    this.printers.refresh();
   }
 
-  async refresh(): Promise<void> {
-    await this.system.loadSystemInfo();
-    await this.printers.loadPrinters();
-  }
-
-  async switchTab(tab: 'printers' | 'config' | 'logs'): Promise<void> {
+  switchTab(tab: 'printers' | 'config' | 'logs'): void {
     this.activeTab.set(tab);
     if (tab === 'config') {
-      await this.system.loadPrintedFiles();
+      this.system.refreshAll();
     }
     if (tab === 'logs') {
       this.logService.markAllRead();
     }
   }
 
-  startRename(printer: PrinterInfo): void {
+  startRename(printer: { queue_name: string; name: string }): void {
     this.renameTarget.set(printer.queue_name);
     this.renameValue.set(printer.name);
   }
@@ -75,7 +68,7 @@ export class HomeComponent implements OnInit {
   }
 
   openPortEditor(): void {
-    this.serverPortInput.set(String(this.system.serverPort()));
+    this.serverPortInput.set(String(this.system.port()));
     this.editingServerPort.set(true);
   }
 
@@ -91,7 +84,7 @@ export class HomeComponent implements OnInit {
   }
 
   openDirEditor(): void {
-    this.system.outputDirInput.set(this.system.outputDir());
+    this.outputDirInput.set(this.system.outputDir.value() ?? '');
     this.editingOutputDir.set(true);
   }
 
@@ -100,9 +93,8 @@ export class HomeComponent implements OnInit {
   }
 
   async saveOutputDir(): Promise<void> {
-    await this.system.saveOutputDir();
+    await this.system.saveOutputDir(this.outputDirInput());
     this.editingOutputDir.set(false);
-    await this.system.loadPrintedFiles();
   }
 
   formatDate(ms: number): string {

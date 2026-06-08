@@ -1,3 +1,5 @@
+use crate::printer_cache;
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct UsbDevice {
     pub display_name: String,
@@ -5,16 +7,24 @@ pub struct UsbDevice {
 }
 
 #[tauri::command]
-pub fn get_serial_ports() -> Vec<String> {
-    get_serial_port_list()
+pub async fn get_serial_ports() -> Vec<String> {
+    tokio::task::spawn_blocking(get_serial_port_list)
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
-pub fn get_usb_devices() -> Vec<UsbDevice> {
-    get_usb_devices_list()
+pub async fn get_usb_devices() -> Vec<UsbDevice> {
+    tokio::task::spawn_blocking(get_usb_devices_list)
+        .await
+        .unwrap_or_default()
 }
 
 fn get_usb_devices_list() -> Vec<UsbDevice> {
+    printer_cache::get_or_load_usb(get_usb_devices_uncached)
+}
+
+fn get_usb_devices_uncached() -> Vec<UsbDevice> {
     #[cfg(target_os = "windows")]
     return get_usb_devices_windows();
 
@@ -127,8 +137,8 @@ pub fn resolve_usb_port(current_or_saved: &str) -> Option<String> {
     if current_or_saved.starts_with("USB") {
         return ports.into_iter().find(|p| p.starts_with("USB"));
     }
-    if current_or_saved.to_uppercase().starts_with("COM") {
-        return ports.into_iter().find(|p| p.to_uppercase().starts_with("COM"));
+    if current_or_saved.to_ascii_uppercase().starts_with("COM") {
+        return ports.into_iter().find(|p| p.to_ascii_uppercase().starts_with("COM"));
     }
     if current_or_saved.starts_with("/dev/usb/lp") {
         return ports.into_iter().find(|p| p.starts_with("/dev/usb/lp"));
