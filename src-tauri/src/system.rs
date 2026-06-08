@@ -192,7 +192,7 @@ pub fn get_autostart_status() -> bool {
 
         let out = Command::new("reg")
             .creation_flags(CREATE_NO_WINDOW)
-            .args(["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "PrinterMonitor"])
+            .args(["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "CentroDeAyudaCodicore"])
             .output();
         out.map(|o| o.status.success()).unwrap_or(false)
     }
@@ -226,14 +226,14 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
             Command::new("reg")
                 .creation_flags(CREATE_NO_WINDOW)
                 .args(["add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                       "/v", "PrinterMonitor", "/d", &format!("\"{}\" --autostart", exe_str), "/f"])
+                       "/v", "CentroDeAyudaCodicore", "/d", &format!("\"{}\" --autostart", exe_str), "/f"])
                 .output()
                 .map_err(|e| e.to_string())?;
         } else {
             Command::new("reg")
                 .creation_flags(CREATE_NO_WINDOW)
                 .args(["delete", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                       "/v", "PrinterMonitor", "/f"])
+                       "/v", "CentroDeAyudaCodicore", "/f"])
                 .output()
                 .map_err(|e| e.to_string())?;
         }
@@ -245,7 +245,7 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
         if enabled {
             let exe = std::env::current_exe().map_err(|e| e.to_string())?;
             let content = format!(
-                "[Desktop Entry]\nType=Application\nName=Printer Monitor\nExec={}\nHidden=false\n",
+                "[Desktop Entry]\nType=Application\nName=Centro de Ayuda Codicore\nExec={}\nHidden=false\n",
                 exe.display()
             );
             if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
@@ -261,7 +261,7 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
 fn get_launchagent_path() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
     std::path::PathBuf::from(home)
-        .join("Library/LaunchAgents/com.codicore.printer-monitor.plist")
+        .join("Library/LaunchAgents/com.codicore.centro-de-ayuda.plist")
 }
 
 #[cfg(target_os = "macos")]
@@ -272,7 +272,7 @@ fn write_launchagent(path: &std::path::Path) -> Result<(), String> {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.codicore.printer-monitor</string>
+  <key>Label</key><string>com.codicore.centro-de-ayuda</string>
   <key>ProgramArguments</key><array><string>{}</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><false/>
@@ -287,7 +287,7 @@ fn write_launchagent(path: &std::path::Path) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 fn get_xdg_autostart_path() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
-    std::path::PathBuf::from(home).join(".config/autostart/printer-monitor.desktop")
+    std::path::PathBuf::from(home).join(".config/autostart/centro-de-ayuda-codicore.desktop")
 }
 
 // ─── First-launch detection ──────────────────────────────────────────────────
@@ -295,7 +295,7 @@ fn get_xdg_autostart_path() -> std::path::PathBuf {
 fn initialized_flag_path() -> std::path::PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(std::env::temp_dir)
-        .join("printer-monitor")
+        .join("centro-de-ayuda-codicore")
         .join(".initialized")
 }
 

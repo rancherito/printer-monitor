@@ -72,7 +72,7 @@ pub fn run() {
 
             TrayIconBuilder::<tauri::Wry>::new()
                 .icon(icon)
-                .tooltip("Printer Monitor")
+                .tooltip("Centro de Ayuda Codicore")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
